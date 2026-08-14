@@ -11,7 +11,7 @@ Paperback installs extensions from a repository URL, not from a file. Add this
 URL in **Paperback → Settings → Extensions → Add Repository**:
 
 ```
-https://shmowzy27.github.io/paperback-hentainexus/
+https://shmowzy27.github.io/paperback-extension/
 ```
 
 Then install **HentaiNexus** from the list.
