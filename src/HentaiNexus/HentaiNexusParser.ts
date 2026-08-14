@@ -105,7 +105,9 @@ export const parseMangaDetails = ($: CheerioAPI, mangaId: string): SourceManga =
             desc: description,
             // A gallery is a finished book, never an ongoing serialisation.
             status: 'Completed',
-            hentai: true,
+            // `hentai` is deliberately not set. The app uses that per-title flag
+            // to hide entries from the Library, which made added titles vanish.
+            // Adult visibility is already handled by the source's ContentRating.
             tags: tags.length > 0
                 ? [App.createTagSection({ id: 'tags', label: 'Tags', tags: tags })]
                 : [],

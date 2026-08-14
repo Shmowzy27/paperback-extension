@@ -33,7 +33,7 @@ import {
 } from './HentaiNexusParser'
 
 export const HentaiNexusInfo: SourceInfo = {
-    version: '1.0.2',
+    version: '1.0.3',
     name: 'HentaiNexus',
     icon: 'icon.png',
     author: 'Shmowzy27',
