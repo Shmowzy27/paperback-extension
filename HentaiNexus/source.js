@@ -15603,7 +15603,7 @@ var _Sources = (() => {
 
   // src/HentaiNexus/HentaiNexus.ts
   var HentaiNexusInfo = {
-    version: "1.0.0",
+    version: "1.0.1",
     name: "HentaiNexus",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15724,7 +15724,8 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
             id: SECTION_NEW,
             title: "New Releases",
             type: import_types2.HomeSectionType.singleRowNormal,
-            containsMoreItems: true
+            containsMoreItems: true,
+            items: []
           }),
           url: this.listingUrl(1)
         },
@@ -15735,12 +15736,12 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
             type: import_types2.HomeSectionType.singleRowNormal,
             // `/explore/hot` is a fixed, curated list of 30 that ignores any
             // page parameter, so there is nothing more to load.
-            containsMoreItems: false
+            containsMoreItems: false,
+            items: []
           }),
           url: `${HN_DOMAIN}/explore/hot`
         }
       ];
-      for (const { section } of sections) sectionCallback(section);
       for (const { section, url } of sections) {
         const $2 = await this.loadPage(url);
         section.items = parseTiles($2);
