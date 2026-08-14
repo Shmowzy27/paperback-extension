@@ -1,19 +1,13 @@
 {
   "compilerOptions": {
-    "tsBuildInfoFile": "./node_modules/.cache/.tsbuildinfo",
-    "module": "preserve",
-    "moduleResolution": "bundler",
-    "target": "esnext",
-    "resolveJsonModule": true,
-    "noEmit": true,
-    "noImplicitOverride": true,
+    "target": "es2020",
+    "module": "commonjs",
+    "moduleResolution": "node",
     "strict": true,
-    "verbatimModuleSyntax": true,
-    "isolatedModules": true,
     "esModuleInterop": true,
+    "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "noUncheckedSideEffectImports": true,
-    "moduleDetection": "force",
-    "skipLibCheck": true
-  }
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"]
 }

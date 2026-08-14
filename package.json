@@ -1,19 +1,21 @@
 {
-  "name": "paperback-hentainexus",
-  "private": true,
-  "description": "Paperback extension that pulls content from hentainexus.com.",
-  "type": "module",
+  "name": "paperback-extension",
+  "version": "0.0.0",
+  "repositoryName": "HentaiNexus (0.8)",
+  "description": "Paperback 0.8 extension for hentainexus.com.",
   "scripts": {
-    "tsc": "tsc",
-    "bundle": "paperback-cli bundle",
-    "serve": "paperback-cli serve",
-    "dev": "paperback-cli serve --watch",
-    "logcat": "paperback-cli logcat"
+    "bundle": "npx paperback bundle",
+    "serve": "npx paperback serve",
+    "test": "npx paperback test"
   },
+  "author": "Shmowzy27",
+  "license": "GPL-3.0-or-later",
   "devDependencies": {
-    "@paperback/toolchain": "^1.0.0-alpha.92",
-    "@paperback/types": "^1.0.0-alpha.92",
-    "cheerio": "^1.2.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@paperback/toolchain": "^0.8.7",
+    "@paperback/types": "^0.8.7",
+    "cheerio": "^1.0.0"
   }
 }

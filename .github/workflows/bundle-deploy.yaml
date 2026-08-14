@@ -31,7 +31,7 @@ jobs:
         run: npm ci
 
       - name: Typecheck
-        run: npm run tsc
+        run: npx tsc
 
       - name: Bundle Extension
         run: npm run bundle
