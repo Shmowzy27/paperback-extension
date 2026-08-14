@@ -33,7 +33,7 @@ import {
 } from './HentaiNexusParser'
 
 export const HentaiNexusInfo: SourceInfo = {
-    version: '1.0.0',
+    version: '1.0.1',
     name: 'HentaiNexus',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -173,7 +173,8 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
                     id: SECTION_NEW,
                     title: 'New Releases',
                     type: HomeSectionType.singleRowNormal,
-                    containsMoreItems: true
+                    containsMoreItems: true,
+                    items: []
                 }),
                 url: this.listingUrl(1)
             },
@@ -184,15 +185,16 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
                     type: HomeSectionType.singleRowNormal,
                     // `/explore/hot` is a fixed, curated list of 30 that ignores any
                     // page parameter, so there is nothing more to load.
-                    containsMoreItems: false
+                    containsMoreItems: false,
+                    items: []
                 }),
                 url: `${HN_DOMAIN}/explore/hot`
             }
         ]
 
-        // Render the empty shells first so the home page lays out immediately.
-        for (const { section } of sections) sectionCallback(section)
-
+        // Each section is reported once, and only after its items are attached.
+        // Emitting a section whose `items` is still unset crashes the app with
+        // "undefined is not an object" the moment it reads the list.
         for (const { section, url } of sections) {
             const $ = await this.loadPage(url)
             section.items = parseTiles($)
