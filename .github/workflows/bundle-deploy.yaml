@@ -36,6 +36,12 @@ jobs:
       - name: Bundle Extension
         run: npm run bundle
 
+      # Paperback runs JavaScriptCore, which has no Node globals. A dependency
+      # that touches one at module scope kills the whole source on device while
+      # working fine under Node, so the bundle is evaluated in a bare VM here.
+      - name: Verify bundle evaluates without Node globals
+        run: node tools/jsc-sim.cjs
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
