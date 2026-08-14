@@ -56,19 +56,40 @@ export const isLastPage = (cards: GalleryCard[]): boolean => {
 }
 
 /**
+ * Ways a volume number is written, most specific first. The keyword forms have
+ * to be tried before the bare trailing number: "Title Ch. 5" also matches the
+ * bare form, but yields the base "Title Ch.", which groups correctly and then
+ * displays a mangled series name.
+ */
+const VOLUME_PATTERNS: RegExp[] = [
+    /^(.*\S)\s+(?:ch\.?|chapter)\s*(\d{1,3})$/i,
+    /^(.*\S)\s+(?:vol\.?|volume)\s*(\d{1,3})$/i,
+    /^(.*\S)\s+(?:part|pt\.?)\s*(\d{1,3})$/i,
+    /^(.*\S)\s*#\s*(\d{1,3})$/,
+    /^(.*\S)\s+(\d{1,3})$/
+]
+
+/**
  * The site has no series field, so volumes are inferred from the title: a
- * trailing number is the volume, and what precedes it is the series.
+ * trailing volume number is stripped and what precedes it is the series.
  * "Bedded by Your Best Friend 5" -> base "Bedded by Your Best Friend", volume 5.
  *
- * This necessarily mis-groups a standalone work whose title simply ends in a
- * number, and misses sequels that are numbered some other way.
+ * This necessarily mis-groups a standalone work whose title merely ends in a
+ * number, and misses sequels numbered some other way entirely.
  */
 export const splitTitle = (title: string): { base: string; volume: number } => {
-    const match = /^(.*\S)\s+(\d{1,3})$/.exec(title.trim())
-    if (match) {
-        return { base: (match[1] as string).trim(), volume: Number(match[2]) }
+    const trimmed = title.trim()
+
+    for (const pattern of VOLUME_PATTERNS) {
+        const match = pattern.exec(trimmed)
+        if (!match) continue
+
+        // Drop any separator left dangling once the number is removed.
+        const base = (match[1] as string).replace(/[\s\-–—:,]+$/, '').trim()
+        if (base.length > 0) return { base, volume: Number(match[2]) }
     }
-    return { base: title.trim(), volume: 1 }
+
+    return { base: trimmed, volume: 1 }
 }
 
 export const seriesIdFor = (title: string): string => `${SERIES_PREFIX}${splitTitle(title).base}`

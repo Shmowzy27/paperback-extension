@@ -87,6 +87,21 @@ const check = (label, ok, detail) => {
     check('a middle volume decodes its own pages', pages.pages.length > 0,
         `vol ${middle.chapNum} (gallery ${middle.id}) -> ${pages.pages.length} pages`)
 
+    // Keyword numbering ("Ch. 4", "#4", "Vol. 4") must group too, and must not
+    // leave the keyword stranded on the end of the series name.
+    const kw = await source.getSearchResults(
+        { title: 'Bridesmaids', includedTags: [], excludedTags: [], parameters: {} },
+        undefined
+    )
+    const kwEntry = kw.results.find((r) => /^Bridesmaids$/i.test(r.title))
+    check('keyword-numbered series groups cleanly', kwEntry != undefined,
+        kw.results.map((r) => r.title).join(' | '))
+    if (kwEntry) {
+        const kwChapters = await source.getChapters(kwEntry.mangaId)
+        check('keyword-numbered series has multiple chapters', kwChapters.length > 1,
+            `${kwChapters.length} chapters: ${kwChapters.map((c) => c.chapNum).join(',')}`)
+    }
+
     // Standalone galleries must keep working for pre-merge library entries.
     const legacy = await source.getMangaDetails('1')
     const legacyChapters = await source.getChapters('1')
