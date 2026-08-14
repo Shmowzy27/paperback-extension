@@ -15009,13 +15009,16 @@ var _Sources = (() => {
       const label = tagFromHref($2(element).attr("href") ?? "");
       if (label) tags.push(App.createTag({ id: label, label }));
     }
-    const additionalInfo = {};
+    const facts = [];
     const pages = detailText($2, "Pages");
     const parody = detailText($2, "Parody");
     const publisher = detailText($2, "Publisher");
-    if (pages) additionalInfo["Pages"] = pages;
-    if (parody) additionalInfo["Parody"] = parody;
-    if (publisher) additionalInfo["Publisher"] = publisher;
+    if (pages) facts.push(`Pages: ${pages}`);
+    if (parody) facts.push(`Parody: ${parody}`);
+    if (publisher) facts.push(`Publisher: ${publisher}`);
+    const synopsis = facts.length > 0 ? `${facts.join(" | ")}
+
+${description}`.trim() : description;
     return App.createSourceManga({
       id: mangaId,
       mangaInfo: App.createMangaInfo({
@@ -15023,14 +15026,13 @@ var _Sources = (() => {
         image,
         artist,
         author: artist,
-        desc: description,
+        desc: synopsis,
         // A gallery is a finished book, never an ongoing serialisation.
         status: "Completed",
         // `hentai` is deliberately not set. The app uses that per-title flag
         // to hide entries from the Library, which made added titles vanish.
         // Adult visibility is already handled by the source's ContentRating.
-        tags: tags.length > 0 ? [App.createTagSection({ id: "tags", label: "Tags", tags })] : [],
-        additionalInfo
+        tags: tags.length > 0 ? [App.createTagSection({ id: "tags", label: "Tags", tags })] : []
       })
     });
   };
@@ -15077,7 +15079,7 @@ var _Sources = (() => {
 
   // src/HentaiNexus/HentaiNexus.ts
   var HentaiNexusInfo = {
-    version: "1.0.3",
+    version: "1.0.4",
     name: "HentaiNexus",
     icon: "icon.png",
     author: "Shmowzy27",
