@@ -14982,12 +14982,22 @@ var _Sources = (() => {
   var isLastPage = (cards) => {
     return cards.length < HN_PAGE_SIZE;
   };
+  var VOLUME_PATTERNS = [
+    /^(.*\S)\s+(?:ch\.?|chapter)\s*(\d{1,3})$/i,
+    /^(.*\S)\s+(?:vol\.?|volume)\s*(\d{1,3})$/i,
+    /^(.*\S)\s+(?:part|pt\.?)\s*(\d{1,3})$/i,
+    /^(.*\S)\s*#\s*(\d{1,3})$/,
+    /^(.*\S)\s+(\d{1,3})$/
+  ];
   var splitTitle = (title) => {
-    const match = /^(.*\S)\s+(\d{1,3})$/.exec(title.trim());
-    if (match) {
-      return { base: match[1].trim(), volume: Number(match[2]) };
+    const trimmed = title.trim();
+    for (const pattern of VOLUME_PATTERNS) {
+      const match = pattern.exec(trimmed);
+      if (!match) continue;
+      const base = match[1].replace(/[\s\-–—:,]+$/, "").trim();
+      if (base.length > 0) return { base, volume: Number(match[2]) };
     }
-    return { base: title.trim(), volume: 1 };
+    return { base: trimmed, volume: 1 };
   };
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
@@ -15132,7 +15142,7 @@ ${description}`.trim() : description;
 
   // src/HentaiNexus/HentaiNexus.ts
   var HentaiNexusInfo = {
-    version: "1.1.0",
+    version: "1.2.0",
     name: "HentaiNexus",
     icon: "icon.png",
     author: "Shmowzy27",
