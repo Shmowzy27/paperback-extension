@@ -14964,27 +14964,68 @@ var _Sources = (() => {
   // src/HentaiNexus/HentaiNexusParser.ts
   var HN_DOMAIN = "https://hentainexus.com";
   var HN_PAGE_SIZE = 30;
-  var parseTiles = ($2) => {
-    const tiles = [];
+  var SERIES_PREFIX = "s:";
+  var parseCards = ($2) => {
+    const cards = [];
     for (const element of $2('a[href^="/view/"]').toArray()) {
       const anchor = $2(element);
       const id = /^\/view\/(\d+)$/.exec(anchor.attr("href") ?? "")?.[1];
       if (!id) continue;
-      const image = anchor.find("figure.image img").attr("src");
-      if (!image) continue;
+      const thumbnailUrl = anchor.find("figure.image img").attr("src");
+      if (!thumbnailUrl) continue;
       const title = anchor.find(".card-header-title").text().trim();
       if (!title) continue;
-      tiles.push(App.createPartialSourceManga({
-        mangaId: id,
-        image,
-        title
+      cards.push({ id, title, thumbnailUrl });
+    }
+    return cards;
+  };
+  var isLastPage = (cards) => {
+    return cards.length < HN_PAGE_SIZE;
+  };
+  var splitTitle = (title) => {
+    const match = /^(.*\S)\s+(\d{1,3})$/.exec(title.trim());
+    if (match) {
+      return { base: match[1].trim(), volume: Number(match[2]) };
+    }
+    return { base: title.trim(), volume: 1 };
+  };
+  var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
+  var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
+  var groupIntoSeries = (cards) => {
+    const series = /* @__PURE__ */ new Map();
+    for (const card of cards) {
+      const { base, volume } = splitTitle(card.title);
+      const key = base.toLowerCase();
+      const existing = series.get(key);
+      if (existing == void 0) {
+        series.set(key, { base, volume, card });
+      } else if (volume < existing.volume) {
+        existing.volume = volume;
+        existing.card = card;
+      }
+    }
+    const results = [];
+    for (const entry of series.values()) {
+      results.push(App.createPartialSourceManga({
+        mangaId: `${SERIES_PREFIX}${entry.base}`,
+        image: entry.card.thumbnailUrl,
+        title: entry.base
       }));
     }
-    return tiles;
+    return results;
   };
-  var isLastPage = (tiles) => {
-    return tiles.length < HN_PAGE_SIZE;
+  var volumesOf = (cards, base) => {
+    const wanted = base.toLowerCase();
+    const volumes = [];
+    for (const card of cards) {
+      const split = splitTitle(card.title);
+      if (split.base.toLowerCase() !== wanted) continue;
+      volumes.push({ ...card, volume: split.volume });
+    }
+    volumes.sort((a, b) => a.volume - b.volume);
+    return volumes;
   };
+  var seriesQuery = (base) => `title:"${base.replace(/"/g, "")}"`;
   var cleanText = ($2, element) => {
     return $2(element).clone().find(".small-tag-count").remove().end().text().trim();
   };
@@ -14999,8 +15040,9 @@ var _Sources = (() => {
     const unquoted = decoded.replace(/^"|"$/g, "").trim();
     return unquoted.length > 0 ? unquoted : void 0;
   };
-  var parseMangaDetails = ($2, mangaId) => {
-    const title = $2("h1.title").first().text().trim();
+  var parseMangaDetails = ($2, mangaId, overrideTitle, volumeCount) => {
+    const galleryTitle = $2("h1.title").first().text().trim();
+    const title = overrideTitle ?? galleryTitle;
     const image = $2("figure.image img").first().attr("src") ?? "";
     const artist = detailText($2, "Artist");
     const description = detailText($2, "Description");
@@ -15010,10 +15052,11 @@ var _Sources = (() => {
       if (label) tags.push(App.createTag({ id: label, label }));
     }
     const facts = [];
+    if (volumeCount != void 0 && volumeCount > 1) facts.push(`Volumes: ${volumeCount}`);
     const pages = detailText($2, "Pages");
     const parody = detailText($2, "Parody");
     const publisher = detailText($2, "Publisher");
-    if (pages) facts.push(`Pages: ${pages}`);
+    if (pages) facts.push(`Pages: ${pages}${volumeCount != void 0 && volumeCount > 1 ? " (first volume)" : ""}`);
     if (parody) facts.push(`Parody: ${parody}`);
     if (publisher) facts.push(`Publisher: ${publisher}`);
     const synopsis = facts.length > 0 ? `${facts.join(" | ")}
@@ -15065,9 +15108,19 @@ ${description}`.trim() : description;
         chapNum: 1,
         name: "Gallery",
         langCode: "\u{1F1EC}\u{1F1E7}",
+        sortingIndex: 1,
         time: parsePublished(detailText($2, "Published"))
       })
     ];
+  };
+  var chaptersFromVolumes = (volumes) => {
+    return volumes.map((entry) => App.createChapter({
+      id: entry.id,
+      chapNum: entry.volume,
+      name: entry.title,
+      langCode: "\u{1F1EC}\u{1F1E7}",
+      sortingIndex: entry.volume
+    }));
   };
   var extractReaderPayload = (html3) => {
     const payload = /initReader\("([^"]+)"/.exec(html3)?.[1];
@@ -15079,12 +15132,12 @@ ${description}`.trim() : description;
 
   // src/HentaiNexus/HentaiNexus.ts
   var HentaiNexusInfo = {
-    version: "1.0.4",
+    version: "1.1.0",
     name: "HentaiNexus",
     icon: "icon.png",
     author: "Shmowzy27",
     authorWebsite: "https://github.com/Shmowzy27",
-    description: "Extension that pulls content from hentainexus.com.",
+    description: "Extension that pulls content from hentainexus.com. Numbered volumes of a series are merged into one entry.",
     contentRating: import_types2.ContentRating.ADULT,
     websiteBaseURL: HN_DOMAIN,
     sourceTags: [
@@ -15120,7 +15173,7 @@ ${description}`.trim() : description;
       });
     }
     getMangaShareUrl(mangaId) {
-      return `${HN_DOMAIN}/view/${mangaId}`;
+      return isSeriesId(mangaId) ? `${HN_DOMAIN}/?q=${encodeURIComponent(seriesQuery(baseFromSeriesId(mangaId)))}` : `${HN_DOMAIN}/view/${mangaId}`;
     }
     async getCloudflareBypassRequestAsync() {
       return App.createRequest({
@@ -15139,30 +15192,51 @@ ${description}`.trim() : description;
 Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.`);
       }
     }
-    async loadPage(url) {
-      return load(await this.fetchHtml(url));
-    }
     async fetchHtml(url) {
       const request = App.createRequest({ url, method: "GET" });
       const response = await this.requestManager.schedule(request, 1);
       this.checkCloudflare(response.status);
       return response.data;
     }
+    async loadPage(url) {
+      return load(await this.fetchHtml(url));
+    }
     /** Every listing surface paginates as `/page/{n}`, with filters carried in `?q=`. */
     listingUrl(page, query) {
       const search = query ? `?q=${encodeURIComponent(query)}` : "";
       return `${HN_DOMAIN}/page/${page}${search}`;
     }
+    /**
+     * Finds a series' volumes by searching its base title. One page is enough;
+     * a series running past 30 volumes would be extraordinary here.
+     */
+    async fetchVolumes(base) {
+      const $2 = await this.loadPage(this.listingUrl(1, seriesQuery(base)));
+      return volumesOf(parseCards($2), base);
+    }
     async getMangaDetails(mangaId) {
-      const $2 = await this.loadPage(`${HN_DOMAIN}/view/${mangaId}`);
-      return parseMangaDetails($2, mangaId);
+      if (!isSeriesId(mangaId)) {
+        const $3 = await this.loadPage(`${HN_DOMAIN}/view/${mangaId}`);
+        return parseMangaDetails($3, mangaId);
+      }
+      const base = baseFromSeriesId(mangaId);
+      const volumes = await this.fetchVolumes(base);
+      if (volumes.length === 0) {
+        throw new Error(`No volumes found for "${base}".`);
+      }
+      const $2 = await this.loadPage(`${HN_DOMAIN}/view/${volumes[0].id}`);
+      return parseMangaDetails($2, mangaId, base, volumes.length);
     }
     async getChapters(mangaId) {
-      const $2 = await this.loadPage(`${HN_DOMAIN}/view/${mangaId}`);
-      return parseChapters($2, mangaId);
+      if (!isSeriesId(mangaId)) {
+        const $2 = await this.loadPage(`${HN_DOMAIN}/view/${mangaId}`);
+        return parseChapters($2, mangaId);
+      }
+      return chaptersFromVolumes(await this.fetchVolumes(baseFromSeriesId(mangaId)));
     }
+    /** Chapter ids are always gallery ids, merged series or not. */
     async getChapterDetails(mangaId, chapterId) {
-      const html3 = await this.fetchHtml(`${HN_DOMAIN}/read/${mangaId}`);
+      const html3 = await this.fetchHtml(`${HN_DOMAIN}/read/${chapterId}`);
       const entries = decodeReaderPayload(extractReaderPayload(html3));
       const pages = [];
       for (const entry of entries) {
@@ -15171,7 +15245,7 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
         if (url) pages.push(url);
       }
       if (pages.length === 0) {
-        throw new Error(`No pages were decoded for gallery ${mangaId}.`);
+        throw new Error(`No pages were decoded for gallery ${chapterId}.`);
       }
       return App.createChapterDetails({
         id: chapterId,
@@ -15186,11 +15260,11 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
       for (const tag of query.includedTags ?? []) {
         terms.push(`tag:"${tag.id}"`);
       }
-      const $2 = await this.loadPage(this.listingUrl(page, terms.join(" ")));
-      const tiles = parseTiles($2);
+      const cards = parseCards(await this.loadPage(this.listingUrl(page, terms.join(" "))));
       return App.createPagedResults({
-        results: tiles,
-        metadata: isLastPage(tiles) ? void 0 : { page: page + 1 }
+        results: groupIntoSeries(cards),
+        // Paging is judged on raw cards; grouping shrinks the visible count.
+        metadata: isLastPage(cards) ? void 0 : { page: page + 1 }
       });
     }
     async getHomePageSections(sectionCallback) {
@@ -15219,8 +15293,7 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
         }
       ];
       for (const { section, url } of sections) {
-        const $2 = await this.loadPage(url);
-        section.items = parseTiles($2);
+        section.items = groupIntoSeries(parseCards(await this.loadPage(url)));
         sectionCallback(section);
       }
     }
@@ -15229,11 +15302,10 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
         return App.createPagedResults({ results: [] });
       }
       const page = metadata?.page ?? 1;
-      const $2 = await this.loadPage(this.listingUrl(page));
-      const tiles = parseTiles($2);
+      const cards = parseCards(await this.loadPage(this.listingUrl(page)));
       return App.createPagedResults({
-        results: tiles,
-        metadata: isLastPage(tiles) ? void 0 : { page: page + 1 }
+        results: groupIntoSeries(cards),
+        metadata: isLastPage(cards) ? void 0 : { page: page + 1 }
       });
     }
   };
