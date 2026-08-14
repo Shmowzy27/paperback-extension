@@ -87,13 +87,21 @@ export const parseMangaDetails = ($: CheerioAPI, mangaId: string): SourceManga =
         if (label) tags.push(App.createTag({ id: label, label: label }))
     }
 
-    const additionalInfo: Record<string, string> = {}
+    // Page count, parody and publisher are folded into the description rather
+    // than passed as `additionalInfo`. Working 0.8 sources hand createMangaInfo
+    // only the fields below, and additionalInfo is absent from the MangaInfo
+    // interface even though the factory accepts it.
+    const facts: string[] = []
     const pages = detailText($, 'Pages')
     const parody = detailText($, 'Parody')
     const publisher = detailText($, 'Publisher')
-    if (pages) additionalInfo['Pages'] = pages
-    if (parody) additionalInfo['Parody'] = parody
-    if (publisher) additionalInfo['Publisher'] = publisher
+    if (pages) facts.push(`Pages: ${pages}`)
+    if (parody) facts.push(`Parody: ${parody}`)
+    if (publisher) facts.push(`Publisher: ${publisher}`)
+
+    const synopsis = facts.length > 0
+        ? `${facts.join(' | ')}\n\n${description}`.trim()
+        : description
 
     return App.createSourceManga({
         id: mangaId,
@@ -102,7 +110,7 @@ export const parseMangaDetails = ($: CheerioAPI, mangaId: string): SourceManga =
             image: image,
             artist: artist,
             author: artist,
-            desc: description,
+            desc: synopsis,
             // A gallery is a finished book, never an ongoing serialisation.
             status: 'Completed',
             // `hentai` is deliberately not set. The app uses that per-title flag
@@ -110,8 +118,7 @@ export const parseMangaDetails = ($: CheerioAPI, mangaId: string): SourceManga =
             // Adult visibility is already handled by the source's ContentRating.
             tags: tags.length > 0
                 ? [App.createTagSection({ id: 'tags', label: 'Tags', tags: tags })]
-                : [],
-            additionalInfo: additionalInfo
+                : []
         })
     })
 }
