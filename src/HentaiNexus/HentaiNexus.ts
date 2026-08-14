@@ -24,21 +24,28 @@ import * as cheerio from 'cheerio'
 import { decodeReaderPayload } from './HentaiNexusDecoder'
 
 import {
+    baseFromSeriesId,
+    chaptersFromVolumes,
     extractReaderPayload,
+    groupIntoSeries,
     HN_DOMAIN,
     isLastPage,
+    isSeriesId,
+    parseCards,
     parseChapters,
     parseMangaDetails,
-    parseTiles
+    seriesQuery,
+    volumesOf,
+    type SeriesVolume
 } from './HentaiNexusParser'
 
 export const HentaiNexusInfo: SourceInfo = {
-    version: '1.0.4',
+    version: '1.1.0',
     name: 'HentaiNexus',
     icon: 'icon.png',
     author: 'Shmowzy27',
     authorWebsite: 'https://github.com/Shmowzy27',
-    description: 'Extension that pulls content from hentainexus.com.',
+    description: 'Extension that pulls content from hentainexus.com. Numbered volumes of a series are merged into one entry.',
     contentRating: ContentRating.ADULT,
     websiteBaseURL: HN_DOMAIN,
     sourceTags: [
@@ -75,7 +82,10 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
     })
 
     getMangaShareUrl(mangaId: string): string {
-        return `${HN_DOMAIN}/view/${mangaId}`
+        // A merged series has no single gallery page, so share its search instead.
+        return isSeriesId(mangaId)
+            ? `${HN_DOMAIN}/?q=${encodeURIComponent(seriesQuery(baseFromSeriesId(mangaId)))}`
+            : `${HN_DOMAIN}/view/${mangaId}`
     }
 
     async getCloudflareBypassRequestAsync(): Promise<Request> {
@@ -96,15 +106,15 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
         }
     }
 
-    private async loadPage(url: string): Promise<cheerio.CheerioAPI> {
-        return cheerio.load(await this.fetchHtml(url))
-    }
-
     private async fetchHtml(url: string): Promise<string> {
         const request = App.createRequest({ url: url, method: 'GET' })
         const response = await this.requestManager.schedule(request, 1)
         this.checkCloudflare(response.status)
         return response.data as string
+    }
+
+    private async loadPage(url: string): Promise<cheerio.CheerioAPI> {
+        return cheerio.load(await this.fetchHtml(url))
     }
 
     /** Every listing surface paginates as `/page/{n}`, with filters carried in `?q=`. */
@@ -113,18 +123,44 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
         return `${HN_DOMAIN}/page/${page}${search}`
     }
 
+    /**
+     * Finds a series' volumes by searching its base title. One page is enough;
+     * a series running past 30 volumes would be extraordinary here.
+     */
+    private async fetchVolumes(base: string): Promise<SeriesVolume[]> {
+        const $ = await this.loadPage(this.listingUrl(1, seriesQuery(base)))
+        return volumesOf(parseCards($), base)
+    }
+
     async getMangaDetails(mangaId: string): Promise<SourceManga> {
-        const $ = await this.loadPage(`${HN_DOMAIN}/view/${mangaId}`)
-        return parseMangaDetails($, mangaId)
+        if (!isSeriesId(mangaId)) {
+            const $ = await this.loadPage(`${HN_DOMAIN}/view/${mangaId}`)
+            return parseMangaDetails($, mangaId)
+        }
+
+        const base = baseFromSeriesId(mangaId)
+        const volumes = await this.fetchVolumes(base)
+        if (volumes.length === 0) {
+            throw new Error(`No volumes found for "${base}".`)
+        }
+
+        // The first volume supplies the cover, artist and tags for the series.
+        const $ = await this.loadPage(`${HN_DOMAIN}/view/${(volumes[0] as SeriesVolume).id}`)
+        return parseMangaDetails($, mangaId, base, volumes.length)
     }
 
     async getChapters(mangaId: string): Promise<Chapter[]> {
-        const $ = await this.loadPage(`${HN_DOMAIN}/view/${mangaId}`)
-        return parseChapters($, mangaId)
+        if (!isSeriesId(mangaId)) {
+            const $ = await this.loadPage(`${HN_DOMAIN}/view/${mangaId}`)
+            return parseChapters($, mangaId)
+        }
+
+        return chaptersFromVolumes(await this.fetchVolumes(baseFromSeriesId(mangaId)))
     }
 
+    /** Chapter ids are always gallery ids, merged series or not. */
     async getChapterDetails(mangaId: string, chapterId: string): Promise<ChapterDetails> {
-        const html = await this.fetchHtml(`${HN_DOMAIN}/read/${mangaId}`)
+        const html = await this.fetchHtml(`${HN_DOMAIN}/read/${chapterId}`)
         const entries = decodeReaderPayload(extractReaderPayload(html))
 
         const pages: string[] = []
@@ -136,7 +172,7 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
         }
 
         if (pages.length === 0) {
-            throw new Error(`No pages were decoded for gallery ${mangaId}.`)
+            throw new Error(`No pages were decoded for gallery ${chapterId}.`)
         }
 
         return App.createChapterDetails({
@@ -149,20 +185,20 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
     async getSearchResults(query: SearchRequest, metadata: { page?: number } | undefined): Promise<PagedResults> {
         const page = metadata?.page ?? 1
 
-        // Included tags are folded into the site's own `tag:"…"` filter syntax,
-        // and a raw query is passed straight through so `artist:…` etc. still work.
+        // Included tags fold into the site's own `tag:"…"` syntax, and a raw
+        // query passes straight through so `artist:…` and friends still work.
         const terms: string[] = []
         if (query.title) terms.push(query.title)
         for (const tag of query.includedTags ?? []) {
             terms.push(`tag:"${tag.id}"`)
         }
 
-        const $ = await this.loadPage(this.listingUrl(page, terms.join(' ')))
-        const tiles = parseTiles($)
+        const cards = parseCards(await this.loadPage(this.listingUrl(page, terms.join(' '))))
 
         return App.createPagedResults({
-            results: tiles,
-            metadata: isLastPage(tiles) ? undefined : { page: page + 1 }
+            results: groupIntoSeries(cards),
+            // Paging is judged on raw cards; grouping shrinks the visible count.
+            metadata: isLastPage(cards) ? undefined : { page: page + 1 }
         })
     }
 
@@ -196,8 +232,7 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
         // Emitting a section whose `items` is still unset crashes the app with
         // "undefined is not an object" the moment it reads the list.
         for (const { section, url } of sections) {
-            const $ = await this.loadPage(url)
-            section.items = parseTiles($)
+            section.items = groupIntoSeries(parseCards(await this.loadPage(url)))
             sectionCallback(section)
         }
     }
@@ -208,12 +243,11 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
         }
 
         const page = metadata?.page ?? 1
-        const $ = await this.loadPage(this.listingUrl(page))
-        const tiles = parseTiles($)
+        const cards = parseCards(await this.loadPage(this.listingUrl(page)))
 
         return App.createPagedResults({
-            results: tiles,
-            metadata: isLastPage(tiles) ? undefined : { page: page + 1 }
+            results: groupIntoSeries(cards),
+            metadata: isLastPage(cards) ? undefined : { page: page + 1 }
         })
     }
 }

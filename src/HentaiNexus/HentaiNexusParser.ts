@@ -12,9 +12,26 @@ export const HN_DOMAIN = 'https://hentainexus.com'
 /** The listing renders a fixed 30 cards per page, so a short page is the last one. */
 export const HN_PAGE_SIZE = 30
 
-/** Gallery cards are identical across the listing, explore and search pages. */
-export const parseTiles = ($: CheerioAPI): PartialSourceManga[] => {
-    const tiles: PartialSourceManga[] = []
+/**
+ * Series entries are addressed by their base title rather than a gallery id,
+ * because no single gallery represents the whole series. Plain numeric ids are
+ * still accepted so library entries saved before grouping existed keep working.
+ */
+export const SERIES_PREFIX = 's:'
+
+export interface GalleryCard {
+    id: string
+    title: string
+    thumbnailUrl: string
+}
+
+export interface SeriesVolume extends GalleryCard {
+    volume: number
+}
+
+/** Raw cards, ungrouped. Pagination must be judged on these, not on series. */
+export const parseCards = ($: CheerioAPI): GalleryCard[] => {
+    const cards: GalleryCard[] = []
 
     for (const element of $('a[href^="/view/"]').toArray()) {
         const anchor = $(element)
@@ -22,25 +39,90 @@ export const parseTiles = ($: CheerioAPI): PartialSourceManga[] => {
         const id = /^\/view\/(\d+)$/.exec(anchor.attr('href') ?? '')?.[1]
         if (!id) continue
 
-        const image = anchor.find('figure.image img').attr('src')
-        if (!image) continue
+        const thumbnailUrl = anchor.find('figure.image img').attr('src')
+        if (!thumbnailUrl) continue
 
         const title = anchor.find('.card-header-title').text().trim()
         if (!title) continue
 
-        tiles.push(App.createPartialSourceManga({
-            mangaId: id,
-            image: image,
-            title: title
-        }))
+        cards.push({ id, title, thumbnailUrl })
     }
 
-    return tiles
+    return cards
 }
 
-export const isLastPage = (tiles: PartialSourceManga[]): boolean => {
-    return tiles.length < HN_PAGE_SIZE
+export const isLastPage = (cards: GalleryCard[]): boolean => {
+    return cards.length < HN_PAGE_SIZE
 }
+
+/**
+ * The site has no series field, so volumes are inferred from the title: a
+ * trailing number is the volume, and what precedes it is the series.
+ * "Bedded by Your Best Friend 5" -> base "Bedded by Your Best Friend", volume 5.
+ *
+ * This necessarily mis-groups a standalone work whose title simply ends in a
+ * number, and misses sequels that are numbered some other way.
+ */
+export const splitTitle = (title: string): { base: string; volume: number } => {
+    const match = /^(.*\S)\s+(\d{1,3})$/.exec(title.trim())
+    if (match) {
+        return { base: (match[1] as string).trim(), volume: Number(match[2]) }
+    }
+    return { base: title.trim(), volume: 1 }
+}
+
+export const seriesIdFor = (title: string): string => `${SERIES_PREFIX}${splitTitle(title).base}`
+
+export const isSeriesId = (mangaId: string): boolean => mangaId.startsWith(SERIES_PREFIX)
+
+export const baseFromSeriesId = (mangaId: string): string => mangaId.slice(SERIES_PREFIX.length)
+
+/** Collapses every volume on a page into a single entry per series. */
+export const groupIntoSeries = (cards: GalleryCard[]): PartialSourceManga[] => {
+    const series = new Map<string, { base: string; volume: number; card: GalleryCard }>()
+
+    for (const card of cards) {
+        const { base, volume } = splitTitle(card.title)
+        const key = base.toLowerCase()
+        const existing = series.get(key)
+
+        // The lowest-numbered volume on the page supplies the cover.
+        if (existing == undefined) {
+            series.set(key, { base, volume, card })
+        } else if (volume < existing.volume) {
+            existing.volume = volume
+            existing.card = card
+        }
+    }
+
+    const results: PartialSourceManga[] = []
+    for (const entry of series.values()) {
+        results.push(App.createPartialSourceManga({
+            mangaId: `${SERIES_PREFIX}${entry.base}`,
+            image: entry.card.thumbnailUrl,
+            title: entry.base
+        }))
+    }
+    return results
+}
+
+/** Keeps only the cards that really belong to `base`, ordered by volume. */
+export const volumesOf = (cards: GalleryCard[], base: string): SeriesVolume[] => {
+    const wanted = base.toLowerCase()
+    const volumes: SeriesVolume[] = []
+
+    for (const card of cards) {
+        const split = splitTitle(card.title)
+        if (split.base.toLowerCase() !== wanted) continue
+        volumes.push({ ...card, volume: split.volume })
+    }
+
+    volumes.sort((a, b) => a.volume - b.volume)
+    return volumes
+}
+
+/** The site's own search syntax; quotes inside the title would break the term. */
+export const seriesQuery = (base: string): string => `title:"${base.replace(/"/g, '')}"`
 
 /**
  * Every linked value carries a nested `.small-tag-count` badge ("Homunculus (68)"),
@@ -75,8 +157,18 @@ const tagFromHref = (href: string): string | undefined => {
     return unquoted.length > 0 ? unquoted : undefined
 }
 
-export const parseMangaDetails = ($: CheerioAPI, mangaId: string): SourceManga => {
-    const title = $('h1.title').first().text().trim()
+/**
+ * Builds details from one gallery page. For a merged series the page belongs to
+ * the first volume, and `overrideTitle` carries the series name instead.
+ */
+export const parseMangaDetails = (
+    $: CheerioAPI,
+    mangaId: string,
+    overrideTitle?: string,
+    volumeCount?: number
+): SourceManga => {
+    const galleryTitle = $('h1.title').first().text().trim()
+    const title = overrideTitle ?? galleryTitle
     const image = $('figure.image img').first().attr('src') ?? ''
     const artist = detailText($, 'Artist')
     const description = detailText($, 'Description')
@@ -87,15 +179,14 @@ export const parseMangaDetails = ($: CheerioAPI, mangaId: string): SourceManga =
         if (label) tags.push(App.createTag({ id: label, label: label }))
     }
 
-    // Page count, parody and publisher are folded into the description rather
-    // than passed as `additionalInfo`. Working 0.8 sources hand createMangaInfo
-    // only the fields below, and additionalInfo is absent from the MangaInfo
-    // interface even though the factory accepts it.
+    // Surfaced in the description because `additionalInfo` is not part of the
+    // MangaInfo interface, and passing it kept entries out of the Library.
     const facts: string[] = []
+    if (volumeCount != undefined && volumeCount > 1) facts.push(`Volumes: ${volumeCount}`)
     const pages = detailText($, 'Pages')
     const parody = detailText($, 'Parody')
     const publisher = detailText($, 'Publisher')
-    if (pages) facts.push(`Pages: ${pages}`)
+    if (pages) facts.push(`Pages: ${pages}${volumeCount != undefined && volumeCount > 1 ? ' (first volume)' : ''}`)
     if (parody) facts.push(`Parody: ${parody}`)
     if (publisher) facts.push(`Publisher: ${publisher}`)
 
@@ -145,7 +236,7 @@ const parsePublished = (value: string): Date | undefined => {
     return isNaN(date.getTime()) ? undefined : date
 }
 
-/** A gallery is a single self-contained book, so it maps to exactly one chapter. */
+/** A standalone gallery is one self-contained book, so it maps to one chapter. */
 export const parseChapters = ($: CheerioAPI, mangaId: string): Chapter[] => {
     return [
         App.createChapter({
@@ -153,9 +244,21 @@ export const parseChapters = ($: CheerioAPI, mangaId: string): Chapter[] => {
             chapNum: 1,
             name: 'Gallery',
             langCode: '🇬🇧',
+            sortingIndex: 1,
             time: parsePublished(detailText($, 'Published'))
         })
     ]
+}
+
+/** Each volume of a merged series becomes its own chapter, in volume order. */
+export const chaptersFromVolumes = (volumes: SeriesVolume[]): Chapter[] => {
+    return volumes.map((entry) => App.createChapter({
+        id: entry.id,
+        chapNum: entry.volume,
+        name: entry.title,
+        langCode: '🇬🇧',
+        sortingIndex: entry.volume
+    }))
 }
 
 /** Pulls the encrypted manifest out of the lone `initReader(...)` call. */

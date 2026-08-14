@@ -36,9 +36,26 @@ compatible, and 0.9 replaced the `author` field with `developers`.
 |---|---|
 | Home | New Releases (paginated) and Popular |
 | Search | Full text, plus the site's own filter syntax |
+| Series | Numbered volumes merged into one entry, one chapter per volume |
 | Details | Artist, parody, publisher, page count, tags, description |
 | Reading | Full page list |
 | Cloudflare | Surfaces Paperback's bypass prompt when challenged |
+
+### Series merging
+
+The site has no series field, so volumes are inferred from the title: a trailing
+number is the volume and what precedes it is the series. "Bedded by Your Best
+Friend 1…5" becomes one entry with five chapters, so reading continues straight
+through instead of hunting for the next gallery.
+
+Two consequences worth knowing:
+
+- A standalone work whose title merely ends in a number gets treated as volume 1
+  of a series, and sequels numbered some other way ("Part Two", a subtitle) are
+  not merged.
+- Merged entries use a `s:<base title>` manga id rather than a gallery id.
+  Plain numeric ids still resolve as single galleries, so entries saved before
+  merging existed keep working.
 
 ### Search syntax
 
