@@ -199,7 +199,7 @@ const chapterNumber = (href: string, name: string): number => {
  * series page, but the markup is the same either way.
  */
 export const parseChapters = ($: CheerioAPI, mangaId: string): Chapter[] => {
-    const chapters: Chapter[] = []
+    const chapters: { id: string; chapNum: number; name: string; time?: Date; isRaw: boolean }[] = []
     const seen = new Set<string>()
 
     for (const element of $('li.wp-manga-chapter, div.chapter-item').toArray()) {
@@ -231,30 +231,31 @@ export const parseChapters = ($: CheerioAPI, mangaId: string): Chapter[] => {
         const base = (name.length > 0 ? name : slug).replace(/\s*\braw\b\s*$/i, '').trim()
         const label = isRaw ? `${base} [RAW]` : base
 
-        chapters.push(App.createChapter({
+        chapters.push({
             id: slug,
             chapNum: chapterNumber(href, name),
             name: label,
             time: time,
-            langCode: isRaw ? '🇰🇷' : '🇬🇧',
-            // Paperback renders groups as the pills above the chapter list, so
-            // this is what gives the reader Raw / Translated buttons to switch
-            // between the two tracks instead of one interleaved list.
-            group: isRaw ? 'Raw' : 'Translated',
-            sortingIndex: chapters.length
-        }))
+            isRaw: isRaw
+        })
     }
 
-    // The site lists newest first; Paperback expects ascending order. Every
-    // field has to be carried over here -- an earlier version rebuilt these
-    // without `group`, which silently removed the Raw/Translated buttons.
+    // The site lists newest first; Paperback expects ascending order.
+    //
+    // Chapters are built once, from plain rows, and never rebuilt from an
+    // already-created Chapter. Reading fields back off one and passing them to
+    // App.createChapter again silently lost `time`: a Date does not survive the
+    // round trip through the app's bridge the way a string does, so every
+    // chapter arrived undated and the app stamped it with the fetch time.
     return chapters.reverse().map((chapter, index) => App.createChapter({
         id: chapter.id,
         chapNum: chapter.chapNum,
         name: chapter.name,
         time: chapter.time,
-        langCode: chapter.langCode,
-        group: chapter.group,
+        langCode: chapter.isRaw ? '🇰🇷' : '🇬🇧',
+        // Paperback shows the group beneath each chapter, and it is what the
+        // English and Raw sources filter on.
+        group: chapter.isRaw ? 'Raw' : 'Translated',
         sortingIndex: index
     }))
 }
