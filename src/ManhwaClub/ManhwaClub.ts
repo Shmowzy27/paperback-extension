@@ -34,7 +34,7 @@ import {
 } from './ManhwaClubParser'
 
 export const ManhwaClubInfo: SourceInfo = {
-    version: '1.2.0',
+    version: '1.3.0',
     name: 'ManhwaClub',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -58,7 +58,7 @@ const SECTION_NEW = 'new-manga'
 export class ManhwaClub implements SearchResultsProviding, MangaProviding, ChapterProviding, HomePageSectionsProviding, CloudflareBypassRequestProviding {
     requestManager = App.createRequestManager({
         requestsPerSecond: 3,
-        requestTimeout: 20000,
+        requestTimeout: 30000,
         interceptor: {
             interceptRequest: async (request: Request): Promise<Request> => {
                 request.headers = {

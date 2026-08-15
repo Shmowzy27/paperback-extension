@@ -164,21 +164,33 @@ export const parseChapters = ($: CheerioAPI, mangaId: string): Chapter[] => {
         // a different language keeps both readable instead of colliding.
         const isRaw = /-raw\/?$/.test(slug) || /\braw\b/i.test(name)
 
+        // The site marks raws with a trailing lowercase "raw", which is easy to
+        // miss in a long list, so it is normalised into a clear tag.
+        const base = (name.length > 0 ? name : slug).replace(/\s*\braw\b\s*$/i, '').trim()
+        const label = isRaw ? `${base} [RAW]` : base
+
         chapters.push(App.createChapter({
             id: slug,
             chapNum: chapterNumber(href, name),
-            name: name.length > 0 ? name : slug,
+            name: label,
             langCode: isRaw ? '🇰🇷' : '🇬🇧',
+            // Paperback renders groups as the pills above the chapter list, so
+            // this is what gives the reader Raw / Translated buttons to switch
+            // between the two tracks instead of one interleaved list.
+            group: isRaw ? 'Raw' : 'Translated',
             sortingIndex: chapters.length
         }))
     }
 
-    // The site lists newest first; Paperback expects ascending order.
+    // The site lists newest first; Paperback expects ascending order. Every
+    // field has to be carried over here -- an earlier version rebuilt these
+    // without `group`, which silently removed the Raw/Translated buttons.
     return chapters.reverse().map((chapter, index) => App.createChapter({
         id: chapter.id,
         chapNum: chapter.chapNum,
         name: chapter.name,
         langCode: chapter.langCode,
+        group: chapter.group,
         sortingIndex: index
     }))
 }

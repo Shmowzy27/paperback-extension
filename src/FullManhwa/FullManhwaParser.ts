@@ -12,12 +12,32 @@ export const FM_DOMAIN = 'https://fullmanhwa.com'
 /** Listings render 24 cards a page; a short page is the last one. */
 export const FM_PAGE_SIZE = 24
 
-/** The only taxonomy the site exposes. */
+/**
+ * Curated listings. `/uncensored` is where the adult titles live -- they do not
+ * appear under the type listings at all, which is why they were missing.
+ */
+export const FM_SECTIONS: { id: string; label: string; path: string }[] = [
+    { id: 'latest', label: 'Latest Releases', path: '/latest' },
+    { id: 'uncensored', label: 'Uncensored (18+)', path: '/uncensored' },
+    { id: 'popular', label: 'Popular', path: '/popular' },
+    { id: 'completed', label: 'Completed', path: '/completed' }
+]
+
+/** The site's only real taxonomy; `/genre` is a plain listing, not a taxonomy. */
 export const FM_TYPES: { id: string; label: string }[] = [
     { id: 'manhwa', label: 'Manhwa' },
     { id: 'manhua', label: 'Manhua' },
     { id: 'manga', label: 'Manga' }
 ]
+
+/** Maps a section or type id onto the path that lists it. */
+export const routeFor = (id: string): string => {
+    const section = FM_SECTIONS.find((entry) => entry.id === id)
+    if (section != undefined) return section.path
+
+    const type = FM_TYPES.find((entry) => entry.id === id)
+    return type != undefined ? `/type/${type.id}` : '/latest'
+}
 
 /** Listings and search results share the same card markup. */
 export const parseTiles = ($: CheerioAPI): PartialSourceManga[] => {

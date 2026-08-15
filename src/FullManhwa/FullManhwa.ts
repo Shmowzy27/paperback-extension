@@ -25,17 +25,19 @@ import * as cheerio from 'cheerio'
 import {
     cookiesFromHeaders,
     FM_DOMAIN,
+    FM_SECTIONS,
     FM_TYPES,
     isLastPage,
     parseChapters,
     parseImagePayload,
     parseMangaDetails,
     parseReaderHandle,
-    parseTiles
+    parseTiles,
+    routeFor
 } from './FullManhwaParser'
 
 export const FullManhwaInfo: SourceInfo = {
-    version: '1.1.0',
+    version: '1.2.0',
     name: 'FullManhwa',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -55,7 +57,7 @@ export const FullManhwaInfo: SourceInfo = {
 export class FullManhwa implements SearchResultsProviding, MangaProviding, ChapterProviding, HomePageSectionsProviding, CloudflareBypassRequestProviding {
     requestManager = App.createRequestManager({
         requestsPerSecond: 3,
-        requestTimeout: 20000,
+        requestTimeout: 30000,
         interceptor: {
             interceptRequest: async (request: Request): Promise<Request> => {
                 request.headers = {
@@ -136,8 +138,8 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
         return cheerio.load((await this.fetch(url)).data as string)
     }
 
-    private listingUrl(type: string, page: number): string {
-        return `${FM_DOMAIN}/type/${type}?page=${page}`
+    private listingUrl(id: string, page: number): string {
+        return `${FM_DOMAIN}${routeFor(id)}?page=${page}`
     }
 
     async getMangaDetails(mangaId: string): Promise<SourceManga> {
@@ -187,12 +189,12 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
 
     async getSearchResults(query: SearchRequest, metadata: { page?: number } | undefined): Promise<PagedResults> {
         const page = metadata?.page ?? 1
-        const type = (query.includedTags ?? [])[0]?.id
+        const selected = (query.includedTags ?? [])[0]?.id
 
-        // Titles go through search; a bare type selection browses that listing.
+        // Titles go through search; a bare selection browses that listing.
         const url = query.title
             ? `${FM_DOMAIN}/search?q=${encodeURIComponent(query.title)}&page=${page}`
-            : this.listingUrl(type ?? 'manhwa', page)
+            : this.listingUrl(selected ?? 'latest', page)
 
         const tiles = parseTiles(await this.loadPage(url))
 
@@ -210,6 +212,11 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
     async getSearchTags(): Promise<TagSection[]> {
         return [
             App.createTagSection({
+                id: 'browse',
+                label: 'Browse',
+                tags: FM_SECTIONS.map((entry) => App.createTag({ id: entry.id, label: entry.label }))
+            }),
+            App.createTagSection({
                 id: 'type',
                 label: 'Type',
                 tags: FM_TYPES.map((type) => App.createTag({ id: type.id, label: type.label }))
@@ -220,16 +227,16 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
     async getHomePageSections(sectionCallback: (section: HomeSection) => void): Promise<void> {
         // Reported once each, only after items are attached: a section with an
         // unset `items` crashes the app when it reads the list.
-        for (const type of FM_TYPES) {
+        for (const entry of FM_SECTIONS) {
             const section = App.createHomeSection({
-                id: type.id,
-                title: type.label,
+                id: entry.id,
+                title: entry.label,
                 type: HomeSectionType.singleRowNormal,
                 containsMoreItems: true,
                 items: []
             })
 
-            section.items = parseTiles(await this.loadPage(this.listingUrl(type.id, 1)))
+            section.items = parseTiles(await this.loadPage(this.listingUrl(entry.id, 1)))
             sectionCallback(section)
         }
     }
