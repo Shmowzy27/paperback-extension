@@ -14982,12 +14982,14 @@ var _Sources = (() => {
   var isLastPage = (cards) => {
     return cards.length < HN_PAGE_SIZE;
   };
+  var VOLUME = "(\\d{1,3}(?:\\.\\d{1,2})?)";
+  var SUBTITLE = "(?:\\s*[:\\-\u2013\u2014]\\s*.+)?";
   var VOLUME_PATTERNS = [
-    /^(.*\S)\s+(?:ch\.?|chapter)\s*(\d{1,3})$/i,
-    /^(.*\S)\s+(?:vol\.?|volume)\s*(\d{1,3})$/i,
-    /^(.*\S)\s+(?:part|pt\.?)\s*(\d{1,3})$/i,
-    /^(.*\S)\s*#\s*(\d{1,3})$/,
-    /^(.*\S)\s+(\d{1,3})$/
+    new RegExp(`^(.*?\\S)\\s+(?:ch\\.?|chapter)\\s*${VOLUME}${SUBTITLE}$`, "i"),
+    new RegExp(`^(.*?\\S)\\s+(?:vol\\.?|volume)\\s*${VOLUME}${SUBTITLE}$`, "i"),
+    new RegExp(`^(.*?\\S)\\s+(?:part|pt\\.?)\\s*${VOLUME}${SUBTITLE}$`, "i"),
+    new RegExp(`^(.*?\\S)\\s*#\\s*${VOLUME}${SUBTITLE}$`),
+    new RegExp(`^(.*?\\S)\\s+${VOLUME}${SUBTITLE}$`)
   ];
   var splitTitle = (title) => {
     const trimmed = title.trim();
@@ -15124,12 +15126,12 @@ ${description}`.trim() : description;
     ];
   };
   var chaptersFromVolumes = (volumes) => {
-    return volumes.map((entry) => App.createChapter({
+    return volumes.map((entry, index2) => App.createChapter({
       id: entry.id,
       chapNum: entry.volume,
       name: entry.title,
       langCode: "\u{1F1EC}\u{1F1E7}",
-      sortingIndex: entry.volume
+      sortingIndex: index2
     }));
   };
   var extractReaderPayload = (html3) => {
@@ -15142,7 +15144,7 @@ ${description}`.trim() : description;
 
   // src/HentaiNexus/HentaiNexus.ts
   var HentaiNexusInfo = {
-    version: "1.2.0",
+    version: "1.2.1",
     name: "HentaiNexus",
     icon: "icon.png",
     author: "Shmowzy27",
