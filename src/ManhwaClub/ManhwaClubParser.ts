@@ -9,8 +9,11 @@ import { CheerioAPI } from 'cheerio'
 
 export const MC_DOMAIN = 'https://manhwaclub.net'
 
-/** Madara listings render a fixed page size; a short page is the last one. */
-export const MC_PAGE_SIZE = 20
+/**
+ * Listings serve 10 per page and search serves 20, so no single page size can
+ * decide when to stop. Paging therefore continues until a page comes back
+ * genuinely empty; guessing a size once cut browsing off after page one.
+ */
 
 /** Covers are lazy-loaded, so the real URL can hide in a data attribute. */
 const imageFrom = ($: CheerioAPI, element: any): string => {
@@ -48,7 +51,7 @@ export const parseTiles = ($: CheerioAPI): PartialSourceManga[] => {
 }
 
 export const isLastPage = (tiles: PartialSourceManga[]): boolean => {
-    return tiles.length < MC_PAGE_SIZE
+    return tiles.length === 0
 }
 
 /** Reads a value out of the `.post-content` label/value rows. */
@@ -156,11 +159,16 @@ export const parseChapters = ($: CheerioAPI, mangaId: string): Chapter[] => {
         const name = anchor.text().trim()
         seen.add(slug)
 
+        // Series carry both translated and raw releases, and they share a
+        // chapter number ("chapter-62" and "chapter-62-raw"). Tagging raws with
+        // a different language keeps both readable instead of colliding.
+        const isRaw = /-raw\/?$/.test(slug) || /\braw\b/i.test(name)
+
         chapters.push(App.createChapter({
             id: slug,
             chapNum: chapterNumber(href, name),
             name: name.length > 0 ? name : slug,
-            langCode: '🇬🇧',
+            langCode: isRaw ? '🇰🇷' : '🇬🇧',
             sortingIndex: chapters.length
         }))
     }

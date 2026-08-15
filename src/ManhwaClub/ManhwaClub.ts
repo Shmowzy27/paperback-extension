@@ -34,7 +34,7 @@ import {
 } from './ManhwaClubParser'
 
 export const ManhwaClubInfo: SourceInfo = {
-    version: '1.1.0',
+    version: '1.2.0',
     name: 'ManhwaClub',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -138,9 +138,14 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
         return cheerio.load(await this.fetchHtml(url))
     }
 
-    /** Madara paginates listings as `/manga/page/{n}/?m_orderby=…`. */
+    /**
+     * Madara paginates as `/manga/page/{n}/?m_orderby=…`, but page 1 only
+     * resolves through a redirect, so it is requested directly.
+     */
     private listingUrl(order: string, page: number): string {
-        return `${MC_DOMAIN}/manga/page/${page}/?m_orderby=${order}`
+        return page <= 1
+            ? `${MC_DOMAIN}/manga/?m_orderby=${order}`
+            : `${MC_DOMAIN}/manga/page/${page}/?m_orderby=${order}`
     }
 
     async getMangaDetails(mangaId: string): Promise<SourceManga> {
