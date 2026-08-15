@@ -14891,7 +14891,7 @@ var _Sources = (() => {
   var imageFrom = ($2, element) => {
     const img = $2(element).find("img").first();
     const source = img.attr("data-src") ?? img.attr("data-lazy-src") ?? img.attr("srcset")?.split(" ")[0] ?? img.attr("src") ?? "";
-    return source.trim();
+    return normaliseImageUrl(source);
   };
   var parseTiles = ($2) => {
     const tiles = [];
@@ -14931,7 +14931,7 @@ var _Sources = (() => {
   var parseMangaDetails = ($2, mangaId) => {
     const heading = $2("div.post-title h1").first().length > 0 ? $2("div.post-title h1").first() : $2("div.post-title h3").first();
     const title = heading.clone().find("span").remove().end().text().replace(/\s+/g, " ").trim();
-    const image = $2("div.summary_image img").first().attr("data-src") ?? $2("div.summary_image img").first().attr("src") ?? "";
+    const image = normaliseImageUrl($2("div.summary_image img").first().attr("data-src") ?? $2("div.summary_image img").first().attr("src") ?? "");
     const description = $2("div.description-summary div.summary__content").text().trim() || $2("div.summary__content").first().text().trim();
     const author = detailText($2, "author");
     const artist = detailText($2, "artist");
@@ -15049,13 +15049,17 @@ var _Sources = (() => {
       sortingIndex: index2
     }));
   };
+  var normaliseImageUrl = (raw) => {
+    const trimmed = raw.trim();
+    return trimmed.startsWith("http://") ? `https://${trimmed.slice("http://".length)}` : trimmed;
+  };
   var parsePages = ($2) => {
     const pages = [];
     for (const element of $2("div.reading-content img").toArray()) {
       const image = $2(element);
       const source = image.attr("data-src") ?? image.attr("data-lazy-src") ?? image.attr("src") ?? "";
-      const trimmed = source.trim();
-      if (trimmed.length > 0) pages.push(trimmed);
+      const url = normaliseImageUrl(source);
+      if (url.length > 0) pages.push(url);
     }
     return pages;
   };
@@ -15074,7 +15078,7 @@ var _Sources = (() => {
 
   // src/ManhwaClubAll/ManhwaClubAll.ts
   var ManhwaClubAllInfo = {
-    version: "1.2.0",
+    version: "1.3.0",
     name: "ManhwaClub (All)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15152,6 +15156,12 @@ var _Sources = (() => {
       if (status === 403 || status === 503) {
         throw new Error(`CLOUDFLARE BYPASS ERROR:
 Please go to the homepage of <${ManhwaClubAllInfo.name}> and press the cloud icon.`);
+      }
+      if (status >= 500) {
+        throw new Error(`The site returned an error (HTTP ${status}). It is probably down or overloaded -- try again shortly.`);
+      }
+      if (status < 200 || status >= 300) {
+        throw new Error(`Unexpected response from the site (HTTP ${status}).`);
       }
     }
     async fetchHtml(url) {

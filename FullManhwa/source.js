@@ -15051,7 +15051,7 @@ var _Sources = (() => {
 
   // src/FullManhwa/FullManhwa.ts
   var FullManhwaInfo = {
-    version: "1.3.0",
+    version: "1.4.0",
     name: "FullManhwa",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15130,6 +15130,12 @@ var _Sources = (() => {
       if (status === 403 || status === 503) {
         throw new Error(`CLOUDFLARE BYPASS ERROR:
 Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`);
+      }
+      if (status >= 500) {
+        throw new Error(`The site returned an error (HTTP ${status}). It is probably down or overloaded -- try again shortly.`);
+      }
+      if (status < 200 || status >= 300) {
+        throw new Error(`Unexpected response from the site (HTTP ${status}).`);
       }
     }
     async fetch(url, headers) {

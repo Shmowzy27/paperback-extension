@@ -15178,7 +15178,7 @@ ${description}`.trim() : description;
 
   // src/HentaiNexus/HentaiNexus.ts
   var HentaiNexusInfo = {
-    version: "1.4.0",
+    version: "1.5.0",
     name: "HentaiNexus",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15236,6 +15236,12 @@ ${description}`.trim() : description;
       if (status === 403 || status === 503) {
         throw new Error(`CLOUDFLARE BYPASS ERROR:
 Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.`);
+      }
+      if (status >= 500) {
+        throw new Error(`The site returned an error (HTTP ${status}). It is probably down or overloaded -- try again shortly.`);
+      }
+      if (status < 200 || status >= 300) {
+        throw new Error(`Unexpected response from the site (HTTP ${status}).`);
       }
     }
     async fetchHtml(url) {
