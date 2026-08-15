@@ -45,7 +45,7 @@ import {
  * while keeping progress, downloads and updates apart.
  */
 export const ManhwaClubRawInfo: SourceInfo = {
-    version: '1.0.0',
+    version: '1.1.0',
     name: 'ManhwaClub (Raw)',
     icon: 'icon.png',
     author: 'Shmowzy27',

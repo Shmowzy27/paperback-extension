@@ -107,12 +107,46 @@ export const parseMangaDetails = ($: CheerioAPI, mangaId: string): SourceManga =
     })
 }
 
+const MONTHS = [
+    'january', 'february', 'march', 'april', 'may', 'june',
+    'july', 'august', 'september', 'october', 'november', 'december'
+]
+
+/**
+ * Release dates render as "Aug 14, 2026". Parsed by hand rather than through
+ * `new Date(...)`, because that is not a spec format and Paperback runs
+ * JavaScriptCore, which need not agree with V8 on non-standard input. A few
+ * rows use a relative age instead.
+ */
+export const parseChapterDate = (raw: string): Date | undefined => {
+    const value = raw.trim()
+    if (value.length === 0) return undefined
+
+    const relative = /^(\d+)\s*([a-z])[a-z]*\s+ago$/i.exec(value)
+    if (relative) {
+        const amount = Number(relative[1])
+        const unit = (relative[2] as string).toLowerCase()
+        const seconds: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400, w: 604800, y: 31536000 }
+        const factor = seconds[unit]
+        return factor != undefined ? new Date(Date.now() - amount * factor * 1000) : undefined
+    }
+
+    const absolute = /^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})$/.exec(value)
+    if (!absolute) return undefined
+
+    const month = MONTHS.findIndex((name) => name.startsWith((absolute[1] as string).toLowerCase()))
+    if (month < 0) return undefined
+
+    const date = new Date(Date.UTC(Number(absolute[3]), month, Number(absolute[2])))
+    return isNaN(date.getTime()) ? undefined : date
+}
+
 /**
  * Chapter rows carry their slug, number and title as data attributes, which is
  * steadier than reading them back out of the link text.
  */
 export const parseChapters = ($: CheerioAPI): Chapter[] => {
-    const rows: { slug: string; number: number; name: string }[] = []
+    const rows: { slug: string; number: number; name: string; time?: Date }[] = []
     const seen = new Set<string>()
 
     for (const element of $('div.chapter-row').toArray()) {
@@ -129,7 +163,12 @@ export const parseChapters = ($: CheerioAPI): Chapter[] => {
             || slug
 
         seen.add(slug)
-        rows.push({ slug, number: isNaN(number) ? 0 : number, name })
+        rows.push({
+            slug,
+            number: isNaN(number) ? 0 : number,
+            name,
+            time: parseChapterDate(row.find('.chapter-age').first().text())
+        })
     }
 
     // The page lists newest first; Paperback expects ascending order.
@@ -139,6 +178,7 @@ export const parseChapters = ($: CheerioAPI): Chapter[] => {
         id: row.slug,
         chapNum: row.number,
         name: row.name,
+        time: row.time,
         langCode: '🇬🇧',
         sortingIndex: index
     }))

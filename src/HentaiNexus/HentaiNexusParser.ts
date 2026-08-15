@@ -338,16 +338,28 @@ export const parseChapters = ($: CheerioAPI, mangaId: string): Chapter[] => {
     ]
 }
 
+/** The publication date of a single gallery page. */
+export const parseGalleryDate = ($: CheerioAPI): Date | undefined => {
+    return parsePublished(detailText($, 'Published'))
+}
+
 /**
  * Each volume of a merged series becomes its own chapter, in volume order.
  * `sortingIndex` is the position rather than the volume, since volumes can be
  * fractional ("4.5") while the index is expected to be a plain counter.
+ *
+ * Dates are supplied by the caller, keyed on gallery id: they live on each
+ * volume's own page, so they cost a request apiece to collect.
  */
-export const chaptersFromVolumes = (volumes: SeriesVolume[]): Chapter[] => {
+export const chaptersFromVolumes = (
+    volumes: SeriesVolume[],
+    times?: Record<string, Date | undefined>
+): Chapter[] => {
     return volumes.map((entry, index) => App.createChapter({
         id: entry.id,
         chapNum: entry.volume,
         name: entry.title,
+        time: times?.[entry.id],
         langCode: '🇬🇧',
         sortingIndex: index
     }))

@@ -37,7 +37,7 @@ import {
 } from './FullManhwaParser'
 
 export const FullManhwaInfo: SourceInfo = {
-    version: '1.2.0',
+    version: '1.3.0',
     name: 'FullManhwa',
     icon: 'icon.png',
     author: 'Shmowzy27',

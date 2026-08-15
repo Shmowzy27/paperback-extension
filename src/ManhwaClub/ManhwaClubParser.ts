@@ -133,6 +133,59 @@ export const parseMangaDetails = ($: CheerioAPI, mangaId: string): SourceManga =
     })
 }
 
+const MONTHS = [
+    'january', 'february', 'march', 'april', 'may', 'june',
+    'july', 'august', 'september', 'october', 'november', 'december'
+]
+
+const RELATIVE_UNITS: { pattern: RegExp; seconds: number }[] = [
+    { pattern: /^(sec|second)/, seconds: 1 },
+    { pattern: /^(min|minute)/, seconds: 60 },
+    { pattern: /^(hour|hr)/, seconds: 3600 },
+    { pattern: /^day/, seconds: 86400 },
+    { pattern: /^week/, seconds: 604800 },
+    { pattern: /^month/, seconds: 2592000 },
+    { pattern: /^year/, seconds: 31536000 }
+]
+
+/**
+ * Release dates come in two shapes: recent chapters carry a relative age
+ * ("6 mins ago") while older ones carry a date ("August 10, 2026"). Both are
+ * parsed by hand rather than through `new Date(...)`, because neither is a
+ * spec format and Paperback runs JavaScriptCore, which need not agree with V8.
+ */
+export const parseChapterDate = (raw: string): Date | undefined => {
+    const value = raw.trim()
+    if (value.length === 0) return undefined
+
+    const relative = /^(?:about\s+)?(\d+)\s+([a-z]+)/i.exec(value)
+    if (relative && /ago/i.test(value)) {
+        const amount = Number(relative[1])
+        const unit = (relative[2] as string).toLowerCase()
+
+        for (const entry of RELATIVE_UNITS) {
+            if (!entry.pattern.test(unit)) continue
+            return new Date(Date.now() - amount * entry.seconds * 1000)
+        }
+        return undefined
+    }
+
+    if (/^(just now|today)$/i.test(value)) return new Date()
+    if (/^yesterday$/i.test(value)) return new Date(Date.now() - 86400000)
+
+    // "August 10, 2026" and the abbreviated "Aug 10, 2026".
+    const absolute = /^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/.exec(value)
+    if (absolute) {
+        const month = MONTHS.findIndex((name) => name.startsWith((absolute[1] as string).toLowerCase()))
+        if (month < 0) return undefined
+
+        const date = new Date(Date.UTC(Number(absolute[3]), month, Number(absolute[2])))
+        return isNaN(date.getTime()) ? undefined : date
+    }
+
+    return undefined
+}
+
 /** Chapter numbers are embedded in the slug ("chapter-94-raw" -> 94). */
 const chapterNumber = (href: string, name: string): number => {
     const fromName = /chapter\s*([\d.]+)/i.exec(name)?.[1]
@@ -159,6 +212,15 @@ export const parseChapters = ($: CheerioAPI, mangaId: string): Chapter[] => {
         const name = anchor.text().trim()
         seen.add(slug)
 
+        // Recent chapters render the age inside a "new" badge, where the date
+        // lives on the title/alt attribute rather than in the text.
+        const dateHolder = $(element).find('.chapter-release-date').first()
+        const time = parseChapterDate(
+            dateHolder.find('a[title]').attr('title')
+            ?? dateHolder.find('img[alt]').attr('alt')
+            ?? dateHolder.text()
+        )
+
         // Series carry both translated and raw releases, and they share a
         // chapter number ("chapter-62" and "chapter-62-raw"). Tagging raws with
         // a different language keeps both readable instead of colliding.
@@ -173,6 +235,7 @@ export const parseChapters = ($: CheerioAPI, mangaId: string): Chapter[] => {
             id: slug,
             chapNum: chapterNumber(href, name),
             name: label,
+            time: time,
             langCode: isRaw ? '🇰🇷' : '🇬🇧',
             // Paperback renders groups as the pills above the chapter list, so
             // this is what gives the reader Raw / Translated buttons to switch
@@ -189,6 +252,7 @@ export const parseChapters = ($: CheerioAPI, mangaId: string): Chapter[] => {
         id: chapter.id,
         chapNum: chapter.chapNum,
         name: chapter.name,
+        time: chapter.time,
         langCode: chapter.langCode,
         group: chapter.group,
         sortingIndex: index

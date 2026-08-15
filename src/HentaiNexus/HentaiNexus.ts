@@ -34,6 +34,7 @@ import {
     isLastPage,
     isSeriesId,
     parseCards,
+    parseGalleryDate,
     parseCategoryTags,
     parseChapters,
     parseMangaDetails,
@@ -44,7 +45,7 @@ import {
 } from './HentaiNexusParser'
 
 export const HentaiNexusInfo: SourceInfo = {
-    version: '1.3.0',
+    version: '1.4.0',
     name: 'HentaiNexus',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -159,7 +160,17 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
             return parseChapters($, mangaId)
         }
 
-        return chaptersFromVolumes(await this.fetchVolumes(baseFromSeriesId(mangaId)))
+        // Each volume's date is only on its own gallery page, so they are
+        // collected one request at a time. Series here run to a handful of
+        // volumes, and a missing date is better than a wrong one.
+        const volumes = await this.fetchVolumes(baseFromSeriesId(mangaId))
+        const times: Record<string, Date | undefined> = {}
+
+        for (const volume of volumes) {
+            times[volume.id] = parseGalleryDate(await this.loadPage(`${HN_DOMAIN}/view/${volume.id}`))
+        }
+
+        return chaptersFromVolumes(volumes, times)
     }
 
     /** Chapter ids are always gallery ids, merged series or not. */
