@@ -45,7 +45,7 @@ import {
  * while keeping progress, downloads and updates apart.
  */
 export const ManhwaClubRawInfo: SourceInfo = {
-    version: '1.2.0',
+    version: '1.3.0',
     name: 'ManhwaClub (Raw)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -130,6 +130,16 @@ export class ManhwaClubRaw implements SearchResultsProviding, MangaProviding, Ch
     private checkCloudflare(status: number): void {
         if (status === 403 || status === 503) {
             throw new Error(`CLOUDFLARE BYPASS ERROR:\nPlease go to the homepage of <${ManhwaClubRawInfo.name}> and press the cloud icon.`)
+        }
+        // A 5xx answer is an error page, not content. Without this it was
+        // parsed anyway, and a Cloudflare "Error code 520" notice ended up
+        // shown as the title of a series.
+        if (status >= 500) {
+            throw new Error(`The site returned an error (HTTP ${status}). It is probably down or overloaded -- try again shortly.`)
+        }
+
+        if (status < 200 || status >= 300) {
+            throw new Error(`Unexpected response from the site (HTTP ${status}).`)
         }
     }
 

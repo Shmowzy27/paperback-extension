@@ -23,7 +23,7 @@ const imageFrom = ($: CheerioAPI, element: any): string => {
         ?? img.attr('srcset')?.split(' ')[0]
         ?? img.attr('src')
         ?? ''
-    return source.trim()
+    return normaliseImageUrl(source)
 }
 
 export const parseTiles = ($: CheerioAPI): PartialSourceManga[] => {
@@ -92,9 +92,9 @@ export const parseMangaDetails = ($: CheerioAPI, mangaId: string): SourceManga =
 
     const title = heading.clone().find('span').remove().end().text().replace(/\s+/g, ' ').trim()
 
-    const image = $('div.summary_image img').first().attr('data-src')
+    const image = normaliseImageUrl($('div.summary_image img').first().attr('data-src')
         ?? $('div.summary_image img').first().attr('src')
-        ?? ''
+        ?? '')
 
     const description = $('div.description-summary div.summary__content').text().trim()
         || $('div.summary__content').first().text().trim()
@@ -273,6 +273,17 @@ export const filterTrack = (chapters: Chapter[], group: 'Raw' | 'Translated'): C
     return matching.length > 0 ? matching : chapters
 }
 
+/**
+ * Page URLs are written as `http://` and with a leading space inside the
+ * quotes. Plain http answers 301, which iOS will not follow for image loads, so
+ * every page rendered blank until the scheme is upgraded. The same URL over
+ * https serves the image directly.
+ */
+const normaliseImageUrl = (raw: string): string => {
+    const trimmed = raw.trim()
+    return trimmed.startsWith('http://') ? `https://${trimmed.slice('http://'.length)}` : trimmed
+}
+
 export const parsePages = ($: CheerioAPI): string[] => {
     const pages: string[] = []
 
@@ -283,8 +294,8 @@ export const parsePages = ($: CheerioAPI): string[] => {
             ?? image.attr('src')
             ?? ''
 
-        const trimmed = source.trim()
-        if (trimmed.length > 0) pages.push(trimmed)
+        const url = normaliseImageUrl(source)
+        if (url.length > 0) pages.push(url)
     }
 
     return pages
