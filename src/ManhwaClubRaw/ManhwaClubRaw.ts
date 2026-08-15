@@ -22,6 +22,8 @@ import {
 
 import * as cheerio from 'cheerio'
 
+// The site is identical for both tracks, so the parser is shared with the
+// English source rather than duplicated.
 import {
     filterTrack,
     isLastPage,
@@ -32,18 +34,31 @@ import {
     parseMangaPostId,
     parsePages,
     parseTiles
-} from './ManhwaClubParser'
+} from '../ManhwaClub/ManhwaClubParser'
 
-export const ManhwaClubInfo: SourceInfo = {
-    version: '2.0.0',
-    name: 'ManhwaClub (English)',
+/**
+ * The raw half of manhwaclub.net, published as its own source.
+ *
+ * Every series carries two release tracks, and Paperback gives an extension no
+ * way to switch between them on the chapter screen. Shipping each track as a
+ * separate source lets the app's cross-source merge present them as one title
+ * while keeping progress, downloads and updates apart.
+ */
+export const ManhwaClubRawInfo: SourceInfo = {
+    version: '1.0.0',
+    name: 'ManhwaClub (Raw)',
     icon: 'icon.png',
     author: 'Shmowzy27',
     authorWebsite: 'https://github.com/Shmowzy27',
-    description: 'Extension that pulls content from manhwaclub.net.',
+    description: 'Untranslated releases from manhwaclub.net. Merge with ManhwaClub (English) to keep both tracks under one title.',
     contentRating: ContentRating.ADULT,
     websiteBaseURL: MC_DOMAIN,
+    language: 'ko',
     sourceTags: [
+        {
+            text: 'RAW',
+            type: BadgeColor.RED
+        },
         {
             text: '18+',
             type: BadgeColor.YELLOW
@@ -56,7 +71,7 @@ const SECTION_LATEST = 'latest'
 const SECTION_TRENDING = 'trending'
 const SECTION_NEW = 'new-manga'
 
-export class ManhwaClub implements SearchResultsProviding, MangaProviding, ChapterProviding, HomePageSectionsProviding, CloudflareBypassRequestProviding {
+export class ManhwaClubRaw implements SearchResultsProviding, MangaProviding, ChapterProviding, HomePageSectionsProviding, CloudflareBypassRequestProviding {
     requestManager = App.createRequestManager({
         requestsPerSecond: 3,
         requestTimeout: 30000,
@@ -70,8 +85,6 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
                     }
                 }
 
-                // Carry any session the user established in the WebView, so
-                // account-locked chapters are visible.
                 const stored = this.storedCookies()
                 if (stored.length > 0) {
                     const existing = (request.headers['cookie'] ?? '').trim()
@@ -90,10 +103,7 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
         return `${MC_DOMAIN}/manga/${mangaId}/`
     }
 
-    /**
-     * Cookies the app holds for this site, including whatever the WebView
-     * picked up when the user signed in.
-     */
+    /** Cookies the app holds for this site, including a WebView sign-in. */
     private storedCookies(): string {
         const cookies = this.requestManager.cookieStore?.getAllCookies() ?? []
 
@@ -106,11 +116,6 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
         return parts.join('; ')
     }
 
-    /**
-     * Opens the login page rather than the homepage. The same WebView both
-     * clears the Cloudflare challenge and lets the user sign in, and the
-     * session it leaves behind unlocks account-gated chapters.
-     */
     async getCloudflareBypassRequestAsync(): Promise<Request> {
         return App.createRequest({
             url: `${MC_DOMAIN}/wp-login.php`,
@@ -124,7 +129,7 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
 
     private checkCloudflare(status: number): void {
         if (status === 403 || status === 503) {
-            throw new Error(`CLOUDFLARE BYPASS ERROR:\nPlease go to the homepage of <${ManhwaClubInfo.name}> and press the cloud icon.`)
+            throw new Error(`CLOUDFLARE BYPASS ERROR:\nPlease go to the homepage of <${ManhwaClubRawInfo.name}> and press the cloud icon.`)
         }
     }
 
@@ -139,10 +144,6 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
         return cheerio.load(await this.fetchHtml(url))
     }
 
-    /**
-     * Madara paginates as `/manga/page/{n}/?m_orderby=…`, but page 1 only
-     * resolves through a redirect, so it is requested directly.
-     */
     private listingUrl(order: string, page: number): string {
         return page <= 1
             ? `${MC_DOMAIN}/manga/?m_orderby=${order}`
@@ -150,21 +151,15 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
     }
 
     async getMangaDetails(mangaId: string): Promise<SourceManga> {
-        const $ = await this.loadPage(this.getMangaShareUrl(mangaId))
-        return parseMangaDetails($, mangaId)
+        return parseMangaDetails(await this.loadPage(this.getMangaShareUrl(mangaId)), mangaId)
     }
 
-    /**
-     * The series page ships only a placeholder list; the real chapters come
-     * from admin-ajax keyed on the numeric post id embedded in that page.
-     */
     async getChapters(mangaId: string): Promise<Chapter[]> {
         const html = await this.fetchHtml(this.getMangaShareUrl(mangaId))
 
         const postId = parseMangaPostId(html)
         if (postId == undefined) {
-            // Fall back to whatever the page itself lists.
-            return filterTrack(parseChapters(cheerio.load(html), mangaId), 'Translated')
+            return filterTrack(parseChapters(cheerio.load(html), mangaId), 'Raw')
         }
 
         const request = App.createRequest({
@@ -181,12 +176,11 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
         const response = await this.requestManager.schedule(request, 1)
         this.checkCloudflare(response.status)
 
-        return filterTrack(parseChapters(cheerio.load(response.data as string), mangaId), 'Translated')
+        return filterTrack(parseChapters(cheerio.load(response.data as string), mangaId), 'Raw')
     }
 
     async getChapterDetails(mangaId: string, chapterId: string): Promise<ChapterDetails> {
-        const $ = await this.loadPage(`${MC_DOMAIN}/manga/${mangaId}/${chapterId}/`)
-        const pages = parsePages($)
+        const pages = parsePages(await this.loadPage(`${MC_DOMAIN}/manga/${mangaId}/${chapterId}/`))
 
         if (pages.length === 0) {
             throw new Error(`No pages found for ${mangaId}/${chapterId}.`)
@@ -199,10 +193,6 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
         })
     }
 
-    /**
-     * Madara filters genres through the taxonomy archive, which takes a single
-     * genre and offers no exclusion, so only one included genre is honoured.
-     */
     async getSearchResults(query: SearchRequest, metadata: { page?: number } | undefined): Promise<PagedResults> {
         const page = metadata?.page ?? 1
         const genre = (query.includedTags ?? [])[0]?.id
@@ -219,17 +209,12 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
         })
     }
 
-    /**
-     * The site's genre archives take one genre and cannot exclude, so the
-     * filter screen is offered without exclusion rather than pretending.
-     */
     async supportsTagExclusion(): Promise<boolean> {
         return false
     }
 
     async getSearchTags(): Promise<TagSection[]> {
-        const $ = await this.loadPage(`${MC_DOMAIN}/manga/?m_orderby=latest`)
-        const tags = parseGenres($)
+        const tags = parseGenres(await this.loadPage(`${MC_DOMAIN}/manga/?m_orderby=latest`))
 
         return tags.length > 0
             ? [App.createTagSection({ id: 'genres', label: 'Genres', tags: tags })]
@@ -243,8 +228,6 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
             { id: SECTION_NEW, title: 'New Series', order: 'new-manga' }
         ]
 
-        // Reported once each, only after items are attached: a section with an
-        // unset `items` crashes the app when it reads the list.
         for (const entry of sections) {
             const section = App.createHomeSection({
                 id: entry.id,

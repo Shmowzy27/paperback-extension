@@ -195,6 +195,19 @@ export const parseChapters = ($: CheerioAPI, mangaId: string): Chapter[] => {
     }))
 }
 
+/**
+ * Narrows a chapter list to one release track. Each track is published as its
+ * own source, so a reader picks Raw or English rather than sifting one
+ * interleaved list.
+ *
+ * A series that only publishes the other track still returns everything: an
+ * empty chapter list would make the series look broken instead of untranslated.
+ */
+export const filterTrack = (chapters: Chapter[], group: 'Raw' | 'Translated'): Chapter[] => {
+    const matching = chapters.filter((chapter) => chapter.group === group)
+    return matching.length > 0 ? matching : chapters
+}
+
 export const parsePages = ($: CheerioAPI): string[] => {
     const pages: string[] = []
 
