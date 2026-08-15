@@ -14888,7 +14888,6 @@ var _Sources = (() => {
 
   // src/ManhwaClub/ManhwaClubParser.ts
   var MC_DOMAIN = "https://manhwaclub.net";
-  var MC_PAGE_SIZE = 20;
   var imageFrom = ($2, element) => {
     const img = $2(element).find("img").first();
     const source = img.attr("data-src") ?? img.attr("data-lazy-src") ?? img.attr("srcset")?.split(" ")[0] ?? img.attr("src") ?? "";
@@ -14913,7 +14912,7 @@ var _Sources = (() => {
     return tiles;
   };
   var isLastPage = (tiles) => {
-    return tiles.length < MC_PAGE_SIZE;
+    return tiles.length === 0;
   };
   var detailText = ($2, label) => {
     return $2("div.post-content_item, div.post-status .post-content_item").filter((_, row) => $2(row).find("div.summary-heading").text().trim().toLowerCase().includes(label)).first().find("div.summary-content").text().trim();
@@ -14976,11 +14975,12 @@ var _Sources = (() => {
       if (!slug || seen.has(slug)) continue;
       const name = anchor.text().trim();
       seen.add(slug);
+      const isRaw = /-raw\/?$/.test(slug) || /\braw\b/i.test(name);
       chapters.push(App.createChapter({
         id: slug,
         chapNum: chapterNumber(href, name),
         name: name.length > 0 ? name : slug,
-        langCode: "\u{1F1EC}\u{1F1E7}",
+        langCode: isRaw ? "\u{1F1F0}\u{1F1F7}" : "\u{1F1EC}\u{1F1E7}",
         sortingIndex: chapters.length
       }));
     }
@@ -15017,7 +15017,7 @@ var _Sources = (() => {
 
   // src/ManhwaClub/ManhwaClub.ts
   var ManhwaClubInfo = {
-    version: "1.1.0",
+    version: "1.2.0",
     name: "ManhwaClub",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15110,9 +15110,12 @@ Please go to the homepage of <${ManhwaClubInfo.name}> and press the cloud icon.`
     async loadPage(url) {
       return load(await this.fetchHtml(url));
     }
-    /** Madara paginates listings as `/manga/page/{n}/?m_orderby=…`. */
+    /**
+     * Madara paginates as `/manga/page/{n}/?m_orderby=…`, but page 1 only
+     * resolves through a redirect, so it is requested directly.
+     */
     listingUrl(order, page) {
-      return `${MC_DOMAIN}/manga/page/${page}/?m_orderby=${order}`;
+      return page <= 1 ? `${MC_DOMAIN}/manga/?m_orderby=${order}` : `${MC_DOMAIN}/manga/page/${page}/?m_orderby=${order}`;
     }
     async getMangaDetails(mangaId) {
       const $2 = await this.loadPage(this.getMangaShareUrl(mangaId));
