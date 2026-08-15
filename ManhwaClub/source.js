@@ -14896,7 +14896,9 @@ var _Sources = (() => {
   var parseTiles = ($2) => {
     const tiles = [];
     const seen = /* @__PURE__ */ new Set();
-    for (const element of $2("div.page-item-detail, div.c-image-hover").toArray()) {
+    const grid = $2("div.page-item-detail").toArray();
+    const elements = grid.length > 0 ? grid : $2("div.c-image-hover").toArray();
+    for (const element of elements) {
       const anchor = $2(element).find('a[href*="/manga/"]').first();
       const slug = /\/manga\/([^/]+)\/?/.exec(anchor.attr("href") ?? "")?.[1];
       if (!slug || seen.has(slug)) continue;
@@ -15082,7 +15084,7 @@ var _Sources = (() => {
 
   // src/ManhwaClub/ManhwaClub.ts
   var ManhwaClubInfo = {
-    version: "2.3.0",
+    version: "2.4.0",
     name: "ManhwaClub (English)",
     icon: "icon.png",
     author: "Shmowzy27",
