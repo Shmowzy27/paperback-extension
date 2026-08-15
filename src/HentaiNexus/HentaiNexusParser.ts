@@ -55,18 +55,31 @@ export const isLastPage = (cards: GalleryCard[]): boolean => {
     return cards.length < HN_PAGE_SIZE
 }
 
+/** Volume numbers are not always whole: "… 4.5" sits between 4 and 5. */
+const VOLUME = '(\\d{1,3}(?:\\.\\d{1,2})?)'
+
+/**
+ * A volume is often followed by its own subtitle ("… 4: Sensuous Moans"), so
+ * the number is not necessarily the end of the title. The separator is required
+ * before a subtitle, which keeps "Title 2 Extra" from being read as volume 2.
+ */
+const SUBTITLE = '(?:\\s*[:\\-–—]\\s*.+)?'
+
 /**
  * Ways a volume number is written, most specific first. The keyword forms have
- * to be tried before the bare trailing number: "Title Ch. 5" also matches the
- * bare form, but yields the base "Title Ch.", which groups correctly and then
- * displays a mangled series name.
+ * to be tried before the bare number: "Title Ch. 5" also matches the bare form,
+ * but yields the base "Title Ch.", which groups correctly and then displays a
+ * mangled series name.
+ *
+ * The leading group is lazy so the *first* number wins. Greedy matching would
+ * read "Title 2: Sub 3" as volume 3 of "Title 2: Sub".
  */
 const VOLUME_PATTERNS: RegExp[] = [
-    /^(.*\S)\s+(?:ch\.?|chapter)\s*(\d{1,3})$/i,
-    /^(.*\S)\s+(?:vol\.?|volume)\s*(\d{1,3})$/i,
-    /^(.*\S)\s+(?:part|pt\.?)\s*(\d{1,3})$/i,
-    /^(.*\S)\s*#\s*(\d{1,3})$/,
-    /^(.*\S)\s+(\d{1,3})$/
+    new RegExp(`^(.*?\\S)\\s+(?:ch\\.?|chapter)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
+    new RegExp(`^(.*?\\S)\\s+(?:vol\\.?|volume)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
+    new RegExp(`^(.*?\\S)\\s+(?:part|pt\\.?)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
+    new RegExp(`^(.*?\\S)\\s*#\\s*${VOLUME}${SUBTITLE}$`),
+    new RegExp(`^(.*?\\S)\\s+${VOLUME}${SUBTITLE}$`)
 ]
 
 /**
@@ -271,14 +284,18 @@ export const parseChapters = ($: CheerioAPI, mangaId: string): Chapter[] => {
     ]
 }
 
-/** Each volume of a merged series becomes its own chapter, in volume order. */
+/**
+ * Each volume of a merged series becomes its own chapter, in volume order.
+ * `sortingIndex` is the position rather than the volume, since volumes can be
+ * fractional ("4.5") while the index is expected to be a plain counter.
+ */
 export const chaptersFromVolumes = (volumes: SeriesVolume[]): Chapter[] => {
-    return volumes.map((entry) => App.createChapter({
+    return volumes.map((entry, index) => App.createChapter({
         id: entry.id,
         chapNum: entry.volume,
         name: entry.title,
         langCode: '🇬🇧',
-        sortingIndex: entry.volume
+        sortingIndex: index
     }))
 }
 

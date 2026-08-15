@@ -102,6 +102,24 @@ const check = (label, ok, detail) => {
             `${kwChapters.length} chapters: ${kwChapters.map((c) => c.chapNum).join(',')}`)
     }
 
+    // Subtitled volumes ("4: Sensuous Moans") and fractional ones ("4.5") must
+    // merge too. This series previously merged only 1, 5, 6 and 7.
+    const sub = await source.getSearchResults(
+        { title: 'Little Miss Debaucherous', includedTags: [], excludedTags: [], parameters: {} },
+        undefined
+    )
+    const subEntry = sub.results.find((r) => /^Little Miss Debaucherous$/i.test(r.title))
+    check('subtitled series collapses to one entry', sub.results.length === 1 && subEntry != undefined,
+        sub.results.map((r) => r.title).join(' | '))
+    if (subEntry) {
+        const subChapters = await source.getChapters(subEntry.mangaId)
+        const subNums = subChapters.map((c) => c.chapNum)
+        check('subtitled and fractional volumes are all chapters', subChapters.length === 9,
+            `${subChapters.length} chapters: ${subNums.join(',')}`)
+        check('fractional volume sits between its neighbours', subNums.includes(4.5)
+            && subNums.indexOf(4.5) === subNums.indexOf(4) + 1, subNums.join(','))
+    }
+
     // Standalone galleries must keep working for pre-merge library entries.
     const legacy = await source.getMangaDetails('1')
     const legacyChapters = await source.getChapters('1')
