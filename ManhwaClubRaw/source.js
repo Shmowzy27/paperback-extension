@@ -735,11 +735,11 @@ var _Sources = (() => {
     }
   });
 
-  // src/ManhwaClub/ManhwaClub.ts
-  var ManhwaClub_exports = {};
-  __export(ManhwaClub_exports, {
-    ManhwaClub: () => ManhwaClub,
-    ManhwaClubInfo: () => ManhwaClubInfo
+  // src/ManhwaClubRaw/ManhwaClubRaw.ts
+  var ManhwaClubRaw_exports = {};
+  __export(ManhwaClubRaw_exports, {
+    ManhwaClubRaw: () => ManhwaClubRaw,
+    ManhwaClubRawInfo: () => ManhwaClubRawInfo
   });
   var import_types2 = __toESM(require_lib());
 
@@ -15026,17 +15026,22 @@ var _Sources = (() => {
     return tags;
   };
 
-  // src/ManhwaClub/ManhwaClub.ts
-  var ManhwaClubInfo = {
-    version: "2.0.0",
-    name: "ManhwaClub (English)",
+  // src/ManhwaClubRaw/ManhwaClubRaw.ts
+  var ManhwaClubRawInfo = {
+    version: "1.0.0",
+    name: "ManhwaClub (Raw)",
     icon: "icon.png",
     author: "Shmowzy27",
     authorWebsite: "https://github.com/Shmowzy27",
-    description: "Extension that pulls content from manhwaclub.net.",
+    description: "Untranslated releases from manhwaclub.net. Merge with ManhwaClub (English) to keep both tracks under one title.",
     contentRating: import_types2.ContentRating.ADULT,
     websiteBaseURL: MC_DOMAIN,
+    language: "ko",
     sourceTags: [
+      {
+        text: "RAW",
+        type: import_types2.BadgeColor.RED
+      },
       {
         text: "18+",
         type: import_types2.BadgeColor.YELLOW
@@ -15047,7 +15052,7 @@ var _Sources = (() => {
   var SECTION_LATEST = "latest";
   var SECTION_TRENDING = "trending";
   var SECTION_NEW = "new-manga";
-  var ManhwaClub = class {
+  var ManhwaClubRaw = class {
     constructor() {
       this.requestManager = App.createRequestManager({
         requestsPerSecond: 3,
@@ -15077,10 +15082,7 @@ var _Sources = (() => {
     getMangaShareUrl(mangaId) {
       return `${MC_DOMAIN}/manga/${mangaId}/`;
     }
-    /**
-     * Cookies the app holds for this site, including whatever the WebView
-     * picked up when the user signed in.
-     */
+    /** Cookies the app holds for this site, including a WebView sign-in. */
     storedCookies() {
       const cookies = this.requestManager.cookieStore?.getAllCookies() ?? [];
       const parts = [];
@@ -15091,11 +15093,6 @@ var _Sources = (() => {
       }
       return parts.join("; ");
     }
-    /**
-     * Opens the login page rather than the homepage. The same WebView both
-     * clears the Cloudflare challenge and lets the user sign in, and the
-     * session it leaves behind unlocks account-gated chapters.
-     */
     async getCloudflareBypassRequestAsync() {
       return App.createRequest({
         url: `${MC_DOMAIN}/wp-login.php`,
@@ -15109,7 +15106,7 @@ var _Sources = (() => {
     checkCloudflare(status) {
       if (status === 403 || status === 503) {
         throw new Error(`CLOUDFLARE BYPASS ERROR:
-Please go to the homepage of <${ManhwaClubInfo.name}> and press the cloud icon.`);
+Please go to the homepage of <${ManhwaClubRawInfo.name}> and press the cloud icon.`);
       }
     }
     async fetchHtml(url) {
@@ -15121,26 +15118,17 @@ Please go to the homepage of <${ManhwaClubInfo.name}> and press the cloud icon.`
     async loadPage(url) {
       return load(await this.fetchHtml(url));
     }
-    /**
-     * Madara paginates as `/manga/page/{n}/?m_orderby=…`, but page 1 only
-     * resolves through a redirect, so it is requested directly.
-     */
     listingUrl(order, page) {
       return page <= 1 ? `${MC_DOMAIN}/manga/?m_orderby=${order}` : `${MC_DOMAIN}/manga/page/${page}/?m_orderby=${order}`;
     }
     async getMangaDetails(mangaId) {
-      const $2 = await this.loadPage(this.getMangaShareUrl(mangaId));
-      return parseMangaDetails($2, mangaId);
+      return parseMangaDetails(await this.loadPage(this.getMangaShareUrl(mangaId)), mangaId);
     }
-    /**
-     * The series page ships only a placeholder list; the real chapters come
-     * from admin-ajax keyed on the numeric post id embedded in that page.
-     */
     async getChapters(mangaId) {
       const html3 = await this.fetchHtml(this.getMangaShareUrl(mangaId));
       const postId = parseMangaPostId(html3);
       if (postId == void 0) {
-        return filterTrack(parseChapters(load(html3), mangaId), "Translated");
+        return filterTrack(parseChapters(load(html3), mangaId), "Raw");
       }
       const request = App.createRequest({
         url: `${MC_DOMAIN}/wp-admin/admin-ajax.php`,
@@ -15154,11 +15142,10 @@ Please go to the homepage of <${ManhwaClubInfo.name}> and press the cloud icon.`
       });
       const response = await this.requestManager.schedule(request, 1);
       this.checkCloudflare(response.status);
-      return filterTrack(parseChapters(load(response.data), mangaId), "Translated");
+      return filterTrack(parseChapters(load(response.data), mangaId), "Raw");
     }
     async getChapterDetails(mangaId, chapterId) {
-      const $2 = await this.loadPage(`${MC_DOMAIN}/manga/${mangaId}/${chapterId}/`);
-      const pages = parsePages($2);
+      const pages = parsePages(await this.loadPage(`${MC_DOMAIN}/manga/${mangaId}/${chapterId}/`));
       if (pages.length === 0) {
         throw new Error(`No pages found for ${mangaId}/${chapterId}.`);
       }
@@ -15168,10 +15155,6 @@ Please go to the homepage of <${ManhwaClubInfo.name}> and press the cloud icon.`
         pages
       });
     }
-    /**
-     * Madara filters genres through the taxonomy archive, which takes a single
-     * genre and offers no exclusion, so only one included genre is honoured.
-     */
     async getSearchResults(query, metadata) {
       const page = metadata?.page ?? 1;
       const genre = (query.includedTags ?? [])[0]?.id;
@@ -15182,16 +15165,11 @@ Please go to the homepage of <${ManhwaClubInfo.name}> and press the cloud icon.`
         metadata: isLastPage(tiles) ? void 0 : { page: page + 1 }
       });
     }
-    /**
-     * The site's genre archives take one genre and cannot exclude, so the
-     * filter screen is offered without exclusion rather than pretending.
-     */
     async supportsTagExclusion() {
       return false;
     }
     async getSearchTags() {
-      const $2 = await this.loadPage(`${MC_DOMAIN}/manga/?m_orderby=latest`);
-      const tags = parseGenres($2);
+      const tags = parseGenres(await this.loadPage(`${MC_DOMAIN}/manga/?m_orderby=latest`));
       return tags.length > 0 ? [App.createTagSection({ id: "genres", label: "Genres", tags })] : [];
     }
     async getHomePageSections(sectionCallback) {
@@ -15221,6 +15199,6 @@ Please go to the homepage of <${ManhwaClubInfo.name}> and press the cloud icon.`
       });
     }
   };
-  return __toCommonJS(ManhwaClub_exports);
+  return __toCommonJS(ManhwaClubRaw_exports);
 })();
 this.Sources = _Sources; if (typeof exports === 'object' && typeof module !== 'undefined') {module.exports.Sources = this.Sources;}
