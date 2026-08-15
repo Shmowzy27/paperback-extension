@@ -15038,6 +15038,36 @@ var _Sources = (() => {
     return volumes;
   };
   var seriesQuery = (base) => `title:"${base.replace(/"/g, "")}"`;
+  var CATEGORIES = [
+    { prefix: "tag", label: "Tags" },
+    { prefix: "artist", label: "Artists" },
+    { prefix: "circle", label: "Circles" },
+    { prefix: "parody", label: "Parodies" },
+    { prefix: "magazine", label: "Magazines" },
+    { prefix: "publisher", label: "Publishers" },
+    { prefix: "event", label: "Events" }
+  ];
+  var parseCategoryTags = ($2, prefix) => {
+    const pattern = new RegExp(`/\\?q=${prefix}:(.+)$`);
+    const seen = /* @__PURE__ */ new Set();
+    const tags = [];
+    for (const element of $2(`a[href*="/?q=${prefix}:"]`).toArray()) {
+      const raw = pattern.exec($2(element).attr("href") ?? "")?.[1];
+      if (!raw) continue;
+      const value = decodeURIComponent(raw.replace(/\+/g, " ")).trim().replace(/^"|"$/g, "").trim();
+      if (value.length === 0 || seen.has(value)) continue;
+      seen.add(value);
+      tags.push(App.createTag({ id: `${prefix}:${value}`, label: value }));
+    }
+    return tags;
+  };
+  var toSearchTerm = (tagId, exclude) => {
+    const separator = tagId.indexOf(":");
+    const prefix = separator < 0 ? "tag" : tagId.slice(0, separator);
+    const value = separator < 0 ? tagId : tagId.slice(separator + 1);
+    const quoted = /\s/.test(value) ? `"${value.replace(/"/g, "")}"` : value;
+    return `${exclude ? "-" : ""}${prefix}:${quoted}`;
+  };
   var cleanText = ($2, element) => {
     return $2(element).clone().find(".small-tag-count").remove().end().text().trim();
   };
@@ -15061,7 +15091,7 @@ var _Sources = (() => {
     const tags = [];
     for (const element of $2('table.view-page-details a[href*="/?q=tag:"]').toArray()) {
       const label = tagFromHref($2(element).attr("href") ?? "");
-      if (label) tags.push(App.createTag({ id: label, label }));
+      if (label) tags.push(App.createTag({ id: `tag:${label}`, label }));
     }
     const facts = [];
     if (volumeCount != void 0 && volumeCount > 1) facts.push(`Volumes: ${volumeCount}`);
@@ -15144,7 +15174,7 @@ ${description}`.trim() : description;
 
   // src/HentaiNexus/HentaiNexus.ts
   var HentaiNexusInfo = {
-    version: "1.2.1",
+    version: "1.3.0",
     name: "HentaiNexus",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15270,7 +15300,10 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
       const terms = [];
       if (query.title) terms.push(query.title);
       for (const tag of query.includedTags ?? []) {
-        terms.push(`tag:"${tag.id}"`);
+        terms.push(toSearchTerm(tag.id, false));
+      }
+      for (const tag of query.excludedTags ?? []) {
+        terms.push(toSearchTerm(tag.id, true));
       }
       const cards = parseCards(await this.loadPage(this.listingUrl(page, terms.join(" "))));
       return App.createPagedResults({
@@ -15278,6 +15311,29 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
         // Paging is judged on raw cards; grouping shrinks the visible count.
         metadata: isLastPage(cards) ? void 0 : { page: page + 1 }
       });
+    }
+    /** Lets the filter screen offer exclusions, not just inclusions. */
+    async supportsTagExclusion() {
+      return true;
+    }
+    /**
+     * Every filterable category the site publishes, so tags, artists, circles,
+     * parodies, magazines, publishers and events can all be picked from the
+     * search filter rather than typed by hand.
+     */
+    async getSearchTags() {
+      const sections = [];
+      for (const category of CATEGORIES) {
+        const $2 = await this.loadPage(`${HN_DOMAIN}/explore/categories/${category.prefix}`);
+        const tags = parseCategoryTags($2, category.prefix);
+        if (tags.length === 0) continue;
+        sections.push(App.createTagSection({
+          id: category.prefix,
+          label: category.label,
+          tags
+        }));
+      }
+      return sections;
     }
     async getHomePageSections(sectionCallback) {
       const sections = [
