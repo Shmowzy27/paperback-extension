@@ -15024,7 +15024,7 @@ var _Sources = (() => {
 
   // src/ManhwaClub/ManhwaClub.ts
   var ManhwaClubInfo = {
-    version: "1.3.0",
+    version: "1.4.0",
     name: "ManhwaClub",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15038,7 +15038,13 @@ var _Sources = (() => {
         type: import_types2.BadgeColor.YELLOW
       }
     ],
-    intents: import_types2.SourceIntents.MANGA_CHAPTERS | import_types2.SourceIntents.HOMEPAGE_SECTIONS | import_types2.SourceIntents.CLOUDFLARE_BYPASS_REQUIRED
+    intents: import_types2.SourceIntents.MANGA_CHAPTERS | import_types2.SourceIntents.HOMEPAGE_SECTIONS | import_types2.SourceIntents.CLOUDFLARE_BYPASS_REQUIRED | import_types2.SourceIntents.SETTINGS_UI
+  };
+  var CHAPTER_TRACK_KEY = "chapter_track";
+  var TRACK_LABELS = {
+    both: "Both",
+    translated: "Translated only",
+    raw: "Raw only"
   };
   var SECTION_LATEST = "latest";
   var SECTION_TRENDING = "trending";
@@ -15069,9 +15075,44 @@ var _Sources = (() => {
           }
         }
       });
+      this.stateManager = App.createSourceStateManager();
     }
     getMangaShareUrl(mangaId) {
       return `${MC_DOMAIN}/manga/${mangaId}/`;
+    }
+    async chapterTrack() {
+      const stored = await this.stateManager.retrieve(CHAPTER_TRACK_KEY);
+      const value = Array.isArray(stored) ? stored[0] : stored;
+      return typeof value === "string" && value in TRACK_LABELS ? value : "both";
+    }
+    /**
+     * Paperback renders `group` as a label on each chapter row, not as filter
+     * buttons, and an extension cannot add buttons to the chapter screen. This
+     * selector is the closest equivalent: pick a track once and the chapter
+     * list shows only that one.
+     */
+    async getSourceMenu() {
+      return App.createDUISection({
+        id: "chapters",
+        header: "Chapters",
+        footer: "Series here are released twice: a translated version and the original raw. Choose which to list.",
+        isHidden: false,
+        rows: async () => [
+          App.createDUISelect({
+            id: CHAPTER_TRACK_KEY,
+            label: "Show",
+            options: ["both", "translated", "raw"],
+            allowsMultiselect: false,
+            labelResolver: async (option) => TRACK_LABELS[option] ?? option,
+            value: App.createDUIBinding({
+              get: async () => [await this.chapterTrack()],
+              set: async (value) => {
+                await this.stateManager.store(CHAPTER_TRACK_KEY, value?.[0] ?? "both");
+              }
+            })
+          })
+        ]
+      });
     }
     /**
      * Cookies the app holds for this site, including whatever the WebView
@@ -15136,7 +15177,7 @@ Please go to the homepage of <${ManhwaClubInfo.name}> and press the cloud icon.`
       const html3 = await this.fetchHtml(this.getMangaShareUrl(mangaId));
       const postId = parseMangaPostId(html3);
       if (postId == void 0) {
-        return parseChapters(load(html3), mangaId);
+        return this.applyTrack(parseChapters(load(html3), mangaId));
       }
       const request = App.createRequest({
         url: `${MC_DOMAIN}/wp-admin/admin-ajax.php`,
@@ -15150,7 +15191,15 @@ Please go to the homepage of <${ManhwaClubInfo.name}> and press the cloud icon.`
       });
       const response = await this.requestManager.schedule(request, 1);
       this.checkCloudflare(response.status);
-      return parseChapters(load(response.data), mangaId);
+      return this.applyTrack(parseChapters(load(response.data), mangaId));
+    }
+    /** Narrows the chapter list to the track chosen in settings. */
+    async applyTrack(chapters) {
+      const track = await this.chapterTrack();
+      if (track === "both") return chapters;
+      const wantRaw = track === "raw";
+      const filtered = chapters.filter((chapter) => chapter.group === "Raw" === wantRaw);
+      return filtered.length > 0 ? filtered : chapters;
     }
     async getChapterDetails(mangaId, chapterId) {
       const $2 = await this.loadPage(`${MC_DOMAIN}/manga/${mangaId}/${chapterId}/`);
