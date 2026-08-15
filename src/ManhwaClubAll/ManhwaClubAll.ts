@@ -44,7 +44,7 @@ import {
  * tracks arrives already combined, each row labelled Raw or Translated.
  */
 export const ManhwaClubAllInfo: SourceInfo = {
-    version: '1.3.0',
+    version: '1.4.0',
     name: 'ManhwaClub (All)',
     icon: 'icon.png',
     author: 'Shmowzy27',

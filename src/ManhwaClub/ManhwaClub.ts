@@ -35,7 +35,7 @@ import {
 } from './ManhwaClubParser'
 
 export const ManhwaClubInfo: SourceInfo = {
-    version: '2.3.0',
+    version: '2.4.0',
     name: 'ManhwaClub (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',

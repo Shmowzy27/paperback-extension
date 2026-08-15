@@ -30,7 +30,15 @@ export const parseTiles = ($: CheerioAPI): PartialSourceManga[] => {
     const tiles: PartialSourceManga[] = []
     const seen = new Set<string>()
 
-    for (const element of $('div.page-item-detail, div.c-image-hover').toArray()) {
+    // Listings render their results as `.page-item-detail`, while search
+    // results only ever use `.c-image-hover`. Matching both at once also swept
+    // up the sidebar widget, which is identical on every page -- seven of the
+    // same titles reappeared on each scroll. So the real grid wins when it is
+    // present, and the looser selector is only a fallback for search.
+    const grid = $('div.page-item-detail').toArray()
+    const elements = grid.length > 0 ? grid : $('div.c-image-hover').toArray()
+
+    for (const element of elements) {
         const anchor = $(element).find('a[href*="/manga/"]').first()
 
         const slug = /\/manga\/([^/]+)\/?/.exec(anchor.attr('href') ?? '')?.[1]
