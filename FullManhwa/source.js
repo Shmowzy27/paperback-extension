@@ -14889,11 +14889,23 @@ var _Sources = (() => {
   // src/FullManhwa/FullManhwaParser.ts
   var FM_DOMAIN = "https://fullmanhwa.com";
   var FM_PAGE_SIZE = 24;
+  var FM_SECTIONS = [
+    { id: "latest", label: "Latest Releases", path: "/latest" },
+    { id: "uncensored", label: "Uncensored (18+)", path: "/uncensored" },
+    { id: "popular", label: "Popular", path: "/popular" },
+    { id: "completed", label: "Completed", path: "/completed" }
+  ];
   var FM_TYPES = [
     { id: "manhwa", label: "Manhwa" },
     { id: "manhua", label: "Manhua" },
     { id: "manga", label: "Manga" }
   ];
+  var routeFor = (id) => {
+    const section = FM_SECTIONS.find((entry) => entry.id === id);
+    if (section != void 0) return section.path;
+    const type = FM_TYPES.find((entry) => entry.id === id);
+    return type != void 0 ? `/type/${type.id}` : "/latest";
+  };
   var parseTiles = ($2) => {
     const tiles = [];
     const seen = /* @__PURE__ */ new Set();
@@ -15001,7 +15013,7 @@ var _Sources = (() => {
 
   // src/FullManhwa/FullManhwa.ts
   var FullManhwaInfo = {
-    version: "1.1.0",
+    version: "1.2.0",
     name: "FullManhwa",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15021,7 +15033,7 @@ var _Sources = (() => {
     constructor() {
       this.requestManager = App.createRequestManager({
         requestsPerSecond: 3,
-        requestTimeout: 2e4,
+        requestTimeout: 3e4,
         interceptor: {
           interceptRequest: async (request) => {
             request.headers = {
@@ -15091,8 +15103,8 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
     async loadPage(url) {
       return load((await this.fetch(url)).data);
     }
-    listingUrl(type, page) {
-      return `${FM_DOMAIN}/type/${type}?page=${page}`;
+    listingUrl(id, page) {
+      return `${FM_DOMAIN}${routeFor(id)}?page=${page}`;
     }
     async getMangaDetails(mangaId) {
       return parseMangaDetails(await this.loadPage(this.getMangaShareUrl(mangaId)), mangaId);
@@ -15133,8 +15145,8 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
     }
     async getSearchResults(query, metadata) {
       const page = metadata?.page ?? 1;
-      const type = (query.includedTags ?? [])[0]?.id;
-      const url = query.title ? `${FM_DOMAIN}/search?q=${encodeURIComponent(query.title)}&page=${page}` : this.listingUrl(type ?? "manhwa", page);
+      const selected = (query.includedTags ?? [])[0]?.id;
+      const url = query.title ? `${FM_DOMAIN}/search?q=${encodeURIComponent(query.title)}&page=${page}` : this.listingUrl(selected ?? "latest", page);
       const tiles = parseTiles(await this.loadPage(url));
       return App.createPagedResults({
         results: tiles,
@@ -15148,6 +15160,11 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
     async getSearchTags() {
       return [
         App.createTagSection({
+          id: "browse",
+          label: "Browse",
+          tags: FM_SECTIONS.map((entry) => App.createTag({ id: entry.id, label: entry.label }))
+        }),
+        App.createTagSection({
           id: "type",
           label: "Type",
           tags: FM_TYPES.map((type) => App.createTag({ id: type.id, label: type.label }))
@@ -15155,15 +15172,15 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
       ];
     }
     async getHomePageSections(sectionCallback) {
-      for (const type of FM_TYPES) {
+      for (const entry of FM_SECTIONS) {
         const section = App.createHomeSection({
-          id: type.id,
-          title: type.label,
+          id: entry.id,
+          title: entry.label,
           type: import_types2.HomeSectionType.singleRowNormal,
           containsMoreItems: true,
           items: []
         });
-        section.items = parseTiles(await this.loadPage(this.listingUrl(type.id, 1)));
+        section.items = parseTiles(await this.loadPage(this.listingUrl(entry.id, 1)));
         sectionCallback(section);
       }
     }

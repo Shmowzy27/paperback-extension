@@ -14976,11 +14976,17 @@ var _Sources = (() => {
       const name = anchor.text().trim();
       seen.add(slug);
       const isRaw = /-raw\/?$/.test(slug) || /\braw\b/i.test(name);
+      const base = (name.length > 0 ? name : slug).replace(/\s*\braw\b\s*$/i, "").trim();
+      const label = isRaw ? `${base} [RAW]` : base;
       chapters.push(App.createChapter({
         id: slug,
         chapNum: chapterNumber(href, name),
-        name: name.length > 0 ? name : slug,
+        name: label,
         langCode: isRaw ? "\u{1F1F0}\u{1F1F7}" : "\u{1F1EC}\u{1F1E7}",
+        // Paperback renders groups as the pills above the chapter list, so
+        // this is what gives the reader Raw / Translated buttons to switch
+        // between the two tracks instead of one interleaved list.
+        group: isRaw ? "Raw" : "Translated",
         sortingIndex: chapters.length
       }));
     }
@@ -14989,6 +14995,7 @@ var _Sources = (() => {
       chapNum: chapter.chapNum,
       name: chapter.name,
       langCode: chapter.langCode,
+      group: chapter.group,
       sortingIndex: index2
     }));
   };
@@ -15017,7 +15024,7 @@ var _Sources = (() => {
 
   // src/ManhwaClub/ManhwaClub.ts
   var ManhwaClubInfo = {
-    version: "1.2.0",
+    version: "1.3.0",
     name: "ManhwaClub",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15040,7 +15047,7 @@ var _Sources = (() => {
     constructor() {
       this.requestManager = App.createRequestManager({
         requestsPerSecond: 3,
-        requestTimeout: 2e4,
+        requestTimeout: 3e4,
         interceptor: {
           interceptRequest: async (request) => {
             request.headers = {
