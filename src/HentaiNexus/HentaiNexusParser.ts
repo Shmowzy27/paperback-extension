@@ -159,6 +159,58 @@ export const volumesOf = (cards: GalleryCard[], base: string): SeriesVolume[] =>
 export const seriesQuery = (base: string): string => `title:"${base.replace(/"/g, '')}"`
 
 /**
+ * Filterable categories, each backed by /explore/categories/{prefix}. `author`
+ * is omitted deliberately: the site lists exactly one entry under it.
+ */
+export const CATEGORIES: { prefix: string; label: string }[] = [
+    { prefix: 'tag', label: 'Tags' },
+    { prefix: 'artist', label: 'Artists' },
+    { prefix: 'circle', label: 'Circles' },
+    { prefix: 'parody', label: 'Parodies' },
+    { prefix: 'magazine', label: 'Magazines' },
+    { prefix: 'publisher', label: 'Publishers' },
+    { prefix: 'event', label: 'Events' }
+]
+
+/**
+ * Category values come from the href rather than the link text, which carries a
+ * usage count ("vanilla (8,359)"). Ids keep their prefix so a search can tell
+ * an artist from a tag.
+ */
+export const parseCategoryTags = ($: CheerioAPI, prefix: string): Tag[] => {
+    const pattern = new RegExp(`/\\?q=${prefix}:(.+)$`)
+    const seen = new Set<string>()
+    const tags: Tag[] = []
+
+    for (const element of $(`a[href*="/?q=${prefix}:"]`).toArray()) {
+        const raw = pattern.exec($(element).attr('href') ?? '')?.[1]
+        if (!raw) continue
+
+        const value = decodeURIComponent(raw.replace(/\+/g, ' ')).trim().replace(/^"|"$/g, '').trim()
+        if (value.length === 0 || seen.has(value)) continue
+
+        seen.add(value)
+        tags.push(App.createTag({ id: `${prefix}:${value}`, label: value }))
+    }
+
+    return tags
+}
+
+/**
+ * Turns a tag id into one search term. Values containing spaces have to be
+ * quoted, and a leading minus is how the site excludes a term.
+ */
+export const toSearchTerm = (tagId: string, exclude: boolean): string => {
+    const separator = tagId.indexOf(':')
+    // Ids without a prefix predate category filtering; they were plain tags.
+    const prefix = separator < 0 ? 'tag' : tagId.slice(0, separator)
+    const value = separator < 0 ? tagId : tagId.slice(separator + 1)
+
+    const quoted = /\s/.test(value) ? `"${value.replace(/"/g, '')}"` : value
+    return `${exclude ? '-' : ''}${prefix}:${quoted}`
+}
+
+/**
  * Every linked value carries a nested `.small-tag-count` badge ("Homunculus (68)"),
  * which has to come off before the text is usable as a name.
  */
@@ -207,10 +259,12 @@ export const parseMangaDetails = (
     const artist = detailText($, 'Artist')
     const description = detailText($, 'Description')
 
+    // Ids carry the `tag:` prefix so tapping one on the details screen searches
+    // the same way the category filters do.
     const tags: Tag[] = []
     for (const element of $('table.view-page-details a[href*="/?q=tag:"]').toArray()) {
         const label = tagFromHref($(element).attr('href') ?? '')
-        if (label) tags.push(App.createTag({ id: label, label: label }))
+        if (label) tags.push(App.createTag({ id: `tag:${label}`, label: label }))
     }
 
     // Surfaced in the description because `additionalInfo` is not part of the

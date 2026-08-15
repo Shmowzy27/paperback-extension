@@ -57,6 +57,24 @@ Two consequences worth knowing:
   Plain numeric ids still resolve as single galleries, so entries saved before
   merging existed keep working.
 
+### Filters
+
+The search filter screen offers every category the site publishes, and each can
+be included or excluded:
+
+| Category | Entries |
+|---|---|
+| Tags | 228 |
+| Artists | 2,420 |
+| Circles | 509 |
+| Parodies | 128 |
+| Magazines | 902 |
+| Publishers | 49 |
+| Events | 127 |
+
+`author` is omitted because the site lists a single entry under it. Filters map
+onto the site's own `prefix:value` terms, with a leading minus for exclusions.
+
 ### Search syntax
 
 Plain text searches titles. The site's own filter syntax is passed straight

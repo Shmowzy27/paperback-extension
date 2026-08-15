@@ -16,7 +16,8 @@ import {
     SearchResultsProviding,
     SourceInfo,
     SourceIntents,
-    SourceManga
+    SourceManga,
+    TagSection
 } from '@paperback/types'
 
 import * as cheerio from 'cheerio'
@@ -25,6 +26,7 @@ import { decodeReaderPayload } from './HentaiNexusDecoder'
 
 import {
     baseFromSeriesId,
+    CATEGORIES,
     chaptersFromVolumes,
     extractReaderPayload,
     groupIntoSeries,
@@ -32,15 +34,17 @@ import {
     isLastPage,
     isSeriesId,
     parseCards,
+    parseCategoryTags,
     parseChapters,
     parseMangaDetails,
     seriesQuery,
+    toSearchTerm,
     volumesOf,
     type SeriesVolume
 } from './HentaiNexusParser'
 
 export const HentaiNexusInfo: SourceInfo = {
-    version: '1.2.1',
+    version: '1.3.0',
     name: 'HentaiNexus',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -185,12 +189,16 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
     async getSearchResults(query: SearchRequest, metadata: { page?: number } | undefined): Promise<PagedResults> {
         const page = metadata?.page ?? 1
 
-        // Included tags fold into the site's own `tag:"…"` syntax, and a raw
-        // query passes straight through so `artist:…` and friends still work.
+        // Selected filters become the site's own `prefix:value` terms, with a
+        // leading minus for exclusions. A typed query passes straight through,
+        // so hand-written syntax like `artist:NaPaTa` still works.
         const terms: string[] = []
         if (query.title) terms.push(query.title)
         for (const tag of query.includedTags ?? []) {
-            terms.push(`tag:"${tag.id}"`)
+            terms.push(toSearchTerm(tag.id, false))
+        }
+        for (const tag of query.excludedTags ?? []) {
+            terms.push(toSearchTerm(tag.id, true))
         }
 
         const cards = parseCards(await this.loadPage(this.listingUrl(page, terms.join(' '))))
@@ -200,6 +208,34 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
             // Paging is judged on raw cards; grouping shrinks the visible count.
             metadata: isLastPage(cards) ? undefined : { page: page + 1 }
         })
+    }
+
+    /** Lets the filter screen offer exclusions, not just inclusions. */
+    async supportsTagExclusion(): Promise<boolean> {
+        return true
+    }
+
+    /**
+     * Every filterable category the site publishes, so tags, artists, circles,
+     * parodies, magazines, publishers and events can all be picked from the
+     * search filter rather than typed by hand.
+     */
+    async getSearchTags(): Promise<TagSection[]> {
+        const sections: TagSection[] = []
+
+        for (const category of CATEGORIES) {
+            const $ = await this.loadPage(`${HN_DOMAIN}/explore/categories/${category.prefix}`)
+            const tags = parseCategoryTags($, category.prefix)
+            if (tags.length === 0) continue
+
+            sections.push(App.createTagSection({
+                id: category.prefix,
+                label: category.label,
+                tags: tags
+            }))
+        }
+
+        return sections
     }
 
     async getHomePageSections(sectionCallback: (section: HomeSection) => void): Promise<void> {

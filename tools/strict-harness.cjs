@@ -120,6 +120,51 @@ const check = (label, ok, detail) => {
             && subNums.indexOf(4.5) === subNums.indexOf(4) + 1, subNums.join(','))
     }
 
+    // Filter categories offered to the search screen.
+    check('tag exclusion is advertised', (await source.supportsTagExclusion()) === true)
+
+    const sections = await source.getSearchTags()
+    check('every category is offered', sections.length === 7,
+        sections.map((s) => `${s.label}:${s.tags.length}`).join(', '))
+    check('filter ids carry their prefix',
+        sections.every((s) => s.tags.every((t) => t.id.startsWith(`${s.id}:`))),
+        sections.find((s) => s.tags.some((t) => !t.id.startsWith(`${s.id}:`)))?.label ?? 'all prefixed')
+
+    const tagSection = sections.find((s) => s.id === 'tag')
+    const glasses = tagSection.tags.find((t) => t.id === 'tag:glasses')
+    check('a known tag is selectable', glasses != undefined, glasses?.id)
+
+    // Including a tag must narrow results...
+    const included = await source.getSearchResults(
+        { includedTags: [glasses], excludedTags: [], parameters: {} }, undefined
+    )
+    check('including a tag returns results', included.results.length > 0,
+        `${included.results.length} entries`)
+
+    // ...and excluding the very same tag must leave nothing, which only holds
+    // if the exclusion really reached the site's query.
+    const contradiction = await source.getSearchResults(
+        { includedTags: [glasses], excludedTags: [glasses], parameters: {} }, undefined
+    )
+    check('excluding the included tag yields nothing', contradiction.results.length === 0,
+        `${contradiction.results.length} entries`)
+
+    // A multi-word value has to survive quoting.
+    const multiword = tagSection.tags.find((t) => /\s/.test(t.label))
+    const quoted = await source.getSearchResults(
+        { includedTags: [multiword], excludedTags: [], parameters: {} }, undefined
+    )
+    check('multi-word filter values are quoted correctly', quoted.results.length > 0,
+        `${multiword?.id} -> ${quoted.results.length} entries`)
+
+    // Non-tag categories must filter too.
+    const artistSection = sections.find((s) => s.id === 'artist')
+    const artistHit = await source.getSearchResults(
+        { includedTags: [artistSection.tags[0]], excludedTags: [], parameters: {} }, undefined
+    )
+    check('artist category filters', artistHit.results.length > 0,
+        `${artistSection?.tags[0]?.id} -> ${artistHit.results.length} entries`)
+
     // Standalone galleries must keep working for pre-merge library entries.
     const legacy = await source.getMangaDetails('1')
     const legacyChapters = await source.getChapters('1')
