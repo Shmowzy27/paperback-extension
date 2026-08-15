@@ -5,6 +5,7 @@ import {
     ChapterProviding,
     CloudflareBypassRequestProviding,
     ContentRating,
+    DUISection,
     HomePageSectionsProviding,
     HomeSection,
     HomeSectionType,
@@ -34,7 +35,7 @@ import {
 } from './ManhwaClubParser'
 
 export const ManhwaClubInfo: SourceInfo = {
-    version: '1.3.0',
+    version: '1.4.0',
     name: 'ManhwaClub',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -48,7 +49,15 @@ export const ManhwaClubInfo: SourceInfo = {
             type: BadgeColor.YELLOW
         }
     ],
-    intents: SourceIntents.MANGA_CHAPTERS | SourceIntents.HOMEPAGE_SECTIONS | SourceIntents.CLOUDFLARE_BYPASS_REQUIRED
+    intents: SourceIntents.MANGA_CHAPTERS | SourceIntents.HOMEPAGE_SECTIONS | SourceIntents.CLOUDFLARE_BYPASS_REQUIRED | SourceIntents.SETTINGS_UI
+}
+
+/** Which of the two release tracks to list. */
+const CHAPTER_TRACK_KEY = 'chapter_track'
+const TRACK_LABELS: Record<string, string> = {
+    both: 'Both',
+    translated: 'Translated only',
+    raw: 'Raw only'
 }
 
 const SECTION_LATEST = 'latest'
@@ -85,8 +94,46 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
         }
     })
 
+    stateManager = App.createSourceStateManager()
+
     getMangaShareUrl(mangaId: string): string {
         return `${MC_DOMAIN}/manga/${mangaId}/`
+    }
+
+    private async chapterTrack(): Promise<string> {
+        const stored = await this.stateManager.retrieve(CHAPTER_TRACK_KEY)
+        const value = Array.isArray(stored) ? stored[0] : stored
+        return typeof value === 'string' && value in TRACK_LABELS ? value : 'both'
+    }
+
+    /**
+     * Paperback renders `group` as a label on each chapter row, not as filter
+     * buttons, and an extension cannot add buttons to the chapter screen. This
+     * selector is the closest equivalent: pick a track once and the chapter
+     * list shows only that one.
+     */
+    async getSourceMenu(): Promise<DUISection> {
+        return App.createDUISection({
+            id: 'chapters',
+            header: 'Chapters',
+            footer: 'Series here are released twice: a translated version and the original raw. Choose which to list.',
+            isHidden: false,
+            rows: async () => [
+                App.createDUISelect({
+                    id: CHAPTER_TRACK_KEY,
+                    label: 'Show',
+                    options: ['both', 'translated', 'raw'],
+                    allowsMultiselect: false,
+                    labelResolver: async (option: string) => TRACK_LABELS[option] ?? option,
+                    value: App.createDUIBinding({
+                        get: async () => [await this.chapterTrack()],
+                        set: async (value: string[]) => {
+                            await this.stateManager.store(CHAPTER_TRACK_KEY, value?.[0] ?? 'both')
+                        }
+                    })
+                })
+            ]
+        })
     }
 
     /**
@@ -163,7 +210,7 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
         const postId = parseMangaPostId(html)
         if (postId == undefined) {
             // Fall back to whatever the page itself lists.
-            return parseChapters(cheerio.load(html), mangaId)
+            return this.applyTrack(parseChapters(cheerio.load(html), mangaId))
         }
 
         const request = App.createRequest({
@@ -180,7 +227,20 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
         const response = await this.requestManager.schedule(request, 1)
         this.checkCloudflare(response.status)
 
-        return parseChapters(cheerio.load(response.data as string), mangaId)
+        return this.applyTrack(parseChapters(cheerio.load(response.data as string), mangaId))
+    }
+
+    /** Narrows the chapter list to the track chosen in settings. */
+    private async applyTrack(chapters: Chapter[]): Promise<Chapter[]> {
+        const track = await this.chapterTrack()
+        if (track === 'both') return chapters
+
+        const wantRaw = track === 'raw'
+        const filtered = chapters.filter((chapter) => (chapter.group === 'Raw') === wantRaw)
+
+        // Never hand back an empty list because of a preference; a series that
+        // only publishes one track would otherwise look broken.
+        return filtered.length > 0 ? filtered : chapters
     }
 
     async getChapterDetails(mangaId: string, chapterId: string): Promise<ChapterDetails> {
