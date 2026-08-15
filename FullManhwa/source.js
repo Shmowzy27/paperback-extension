@@ -14953,6 +14953,38 @@ var _Sources = (() => {
       })
     });
   };
+  var MONTHS = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december"
+  ];
+  var parseChapterDate = (raw) => {
+    const value = raw.trim();
+    if (value.length === 0) return void 0;
+    const relative = /^(\d+)\s*([a-z])[a-z]*\s+ago$/i.exec(value);
+    if (relative) {
+      const amount = Number(relative[1]);
+      const unit = relative[2].toLowerCase();
+      const seconds = { s: 1, m: 60, h: 3600, d: 86400, w: 604800, y: 31536e3 };
+      const factor = seconds[unit];
+      return factor != void 0 ? new Date(Date.now() - amount * factor * 1e3) : void 0;
+    }
+    const absolute = /^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})$/.exec(value);
+    if (!absolute) return void 0;
+    const month = MONTHS.findIndex((name) => name.startsWith(absolute[1].toLowerCase()));
+    if (month < 0) return void 0;
+    const date = new Date(Date.UTC(Number(absolute[3]), month, Number(absolute[2])));
+    return isNaN(date.getTime()) ? void 0 : date;
+  };
   var parseChapters = ($2) => {
     const rows = [];
     const seen = /* @__PURE__ */ new Set();
@@ -14963,13 +14995,19 @@ var _Sources = (() => {
       const number = Number(row.attr("data-number"));
       const name = row.find(".chapter-name strong").first().text().trim() || (row.attr("data-title") ?? "").trim() || slug;
       seen.add(slug);
-      rows.push({ slug, number: isNaN(number) ? 0 : number, name });
+      rows.push({
+        slug,
+        number: isNaN(number) ? 0 : number,
+        name,
+        time: parseChapterDate(row.find(".chapter-age").first().text())
+      });
     }
     rows.sort((a, b) => a.number - b.number);
     return rows.map((row, index2) => App.createChapter({
       id: row.slug,
       chapNum: row.number,
       name: row.name,
+      time: row.time,
       langCode: "\u{1F1EC}\u{1F1E7}",
       sortingIndex: index2
     }));
@@ -15013,7 +15051,7 @@ var _Sources = (() => {
 
   // src/FullManhwa/FullManhwa.ts
   var FullManhwaInfo = {
-    version: "1.2.0",
+    version: "1.3.0",
     name: "FullManhwa",
     icon: "icon.png",
     author: "Shmowzy27",

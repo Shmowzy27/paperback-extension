@@ -15155,11 +15155,15 @@ ${description}`.trim() : description;
       })
     ];
   };
-  var chaptersFromVolumes = (volumes) => {
+  var parseGalleryDate = ($2) => {
+    return parsePublished(detailText($2, "Published"));
+  };
+  var chaptersFromVolumes = (volumes, times) => {
     return volumes.map((entry, index2) => App.createChapter({
       id: entry.id,
       chapNum: entry.volume,
       name: entry.title,
+      time: times?.[entry.id],
       langCode: "\u{1F1EC}\u{1F1E7}",
       sortingIndex: index2
     }));
@@ -15174,7 +15178,7 @@ ${description}`.trim() : description;
 
   // src/HentaiNexus/HentaiNexus.ts
   var HentaiNexusInfo = {
-    version: "1.3.0",
+    version: "1.4.0",
     name: "HentaiNexus",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15274,7 +15278,12 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
         const $2 = await this.loadPage(`${HN_DOMAIN}/view/${mangaId}`);
         return parseChapters($2, mangaId);
       }
-      return chaptersFromVolumes(await this.fetchVolumes(baseFromSeriesId(mangaId)));
+      const volumes = await this.fetchVolumes(baseFromSeriesId(mangaId));
+      const times = {};
+      for (const volume of volumes) {
+        times[volume.id] = parseGalleryDate(await this.loadPage(`${HN_DOMAIN}/view/${volume.id}`));
+      }
+      return chaptersFromVolumes(volumes, times);
     }
     /** Chapter ids are always gallery ids, merged series or not. */
     async getChapterDetails(mangaId, chapterId) {

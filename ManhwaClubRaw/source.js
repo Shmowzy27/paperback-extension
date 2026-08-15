@@ -14959,6 +14959,53 @@ var _Sources = (() => {
       })
     });
   };
+  var MONTHS = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december"
+  ];
+  var RELATIVE_UNITS = [
+    { pattern: /^(sec|second)/, seconds: 1 },
+    { pattern: /^(min|minute)/, seconds: 60 },
+    { pattern: /^(hour|hr)/, seconds: 3600 },
+    { pattern: /^day/, seconds: 86400 },
+    { pattern: /^week/, seconds: 604800 },
+    { pattern: /^month/, seconds: 2592e3 },
+    { pattern: /^year/, seconds: 31536e3 }
+  ];
+  var parseChapterDate = (raw) => {
+    const value = raw.trim();
+    if (value.length === 0) return void 0;
+    const relative = /^(?:about\s+)?(\d+)\s+([a-z]+)/i.exec(value);
+    if (relative && /ago/i.test(value)) {
+      const amount = Number(relative[1]);
+      const unit = relative[2].toLowerCase();
+      for (const entry of RELATIVE_UNITS) {
+        if (!entry.pattern.test(unit)) continue;
+        return new Date(Date.now() - amount * entry.seconds * 1e3);
+      }
+      return void 0;
+    }
+    if (/^(just now|today)$/i.test(value)) return /* @__PURE__ */ new Date();
+    if (/^yesterday$/i.test(value)) return new Date(Date.now() - 864e5);
+    const absolute = /^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/.exec(value);
+    if (absolute) {
+      const month = MONTHS.findIndex((name) => name.startsWith(absolute[1].toLowerCase()));
+      if (month < 0) return void 0;
+      const date = new Date(Date.UTC(Number(absolute[3]), month, Number(absolute[2])));
+      return isNaN(date.getTime()) ? void 0 : date;
+    }
+    return void 0;
+  };
   var chapterNumber = (href, name) => {
     const fromName = /chapter\s*([\d.]+)/i.exec(name)?.[1];
     const fromHref = /chapter-([\d.]+)/i.exec(href)?.[1];
@@ -14975,6 +15022,10 @@ var _Sources = (() => {
       if (!slug || seen.has(slug)) continue;
       const name = anchor.text().trim();
       seen.add(slug);
+      const dateHolder = $2(element).find(".chapter-release-date").first();
+      const time = parseChapterDate(
+        dateHolder.find("a[title]").attr("title") ?? dateHolder.find("img[alt]").attr("alt") ?? dateHolder.text()
+      );
       const isRaw = /-raw\/?$/.test(slug) || /\braw\b/i.test(name);
       const base = (name.length > 0 ? name : slug).replace(/\s*\braw\b\s*$/i, "").trim();
       const label = isRaw ? `${base} [RAW]` : base;
@@ -14982,6 +15033,7 @@ var _Sources = (() => {
         id: slug,
         chapNum: chapterNumber(href, name),
         name: label,
+        time,
         langCode: isRaw ? "\u{1F1F0}\u{1F1F7}" : "\u{1F1EC}\u{1F1E7}",
         // Paperback renders groups as the pills above the chapter list, so
         // this is what gives the reader Raw / Translated buttons to switch
@@ -14994,6 +15046,7 @@ var _Sources = (() => {
       id: chapter.id,
       chapNum: chapter.chapNum,
       name: chapter.name,
+      time: chapter.time,
       langCode: chapter.langCode,
       group: chapter.group,
       sortingIndex: index2
@@ -15028,7 +15081,7 @@ var _Sources = (() => {
 
   // src/ManhwaClubRaw/ManhwaClubRaw.ts
   var ManhwaClubRawInfo = {
-    version: "1.0.0",
+    version: "1.1.0",
     name: "ManhwaClub (Raw)",
     icon: "icon.png",
     author: "Shmowzy27",
