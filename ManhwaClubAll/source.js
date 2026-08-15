@@ -15029,26 +15029,23 @@ var _Sources = (() => {
       const isRaw = /-raw\/?$/.test(slug) || /\braw\b/i.test(name);
       const base = (name.length > 0 ? name : slug).replace(/\s*\braw\b\s*$/i, "").trim();
       const label = isRaw ? `${base} [RAW]` : base;
-      chapters.push(App.createChapter({
+      chapters.push({
         id: slug,
         chapNum: chapterNumber(href, name),
         name: label,
         time,
-        langCode: isRaw ? "\u{1F1F0}\u{1F1F7}" : "\u{1F1EC}\u{1F1E7}",
-        // Paperback renders groups as the pills above the chapter list, so
-        // this is what gives the reader Raw / Translated buttons to switch
-        // between the two tracks instead of one interleaved list.
-        group: isRaw ? "Raw" : "Translated",
-        sortingIndex: chapters.length
-      }));
+        isRaw
+      });
     }
     return chapters.reverse().map((chapter, index2) => App.createChapter({
       id: chapter.id,
       chapNum: chapter.chapNum,
       name: chapter.name,
       time: chapter.time,
-      langCode: chapter.langCode,
-      group: chapter.group,
+      langCode: chapter.isRaw ? "\u{1F1F0}\u{1F1F7}" : "\u{1F1EC}\u{1F1E7}",
+      // Paperback shows the group beneath each chapter, and it is what the
+      // English and Raw sources filter on.
+      group: chapter.isRaw ? "Raw" : "Translated",
       sortingIndex: index2
     }));
   };
@@ -15077,7 +15074,7 @@ var _Sources = (() => {
 
   // src/ManhwaClubAll/ManhwaClubAll.ts
   var ManhwaClubAllInfo = {
-    version: "1.1.0",
+    version: "1.2.0",
     name: "ManhwaClub (All)",
     icon: "icon.png",
     author: "Shmowzy27",
