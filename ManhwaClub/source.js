@@ -15017,7 +15017,7 @@ var _Sources = (() => {
 
   // src/ManhwaClub/ManhwaClub.ts
   var ManhwaClubInfo = {
-    version: "1.0.0",
+    version: "1.1.0",
     name: "ManhwaClub",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15050,6 +15050,11 @@ var _Sources = (() => {
                 "user-agent": await this.requestManager.getDefaultUserAgent()
               }
             };
+            const stored = this.storedCookies();
+            if (stored.length > 0) {
+              const existing = (request.headers["cookie"] ?? "").trim();
+              request.headers["cookie"] = existing.length > 0 ? `${stored}; ${existing}` : stored;
+            }
             return request;
           },
           interceptResponse: async (response) => {
@@ -15061,9 +15066,28 @@ var _Sources = (() => {
     getMangaShareUrl(mangaId) {
       return `${MC_DOMAIN}/manga/${mangaId}/`;
     }
+    /**
+     * Cookies the app holds for this site, including whatever the WebView
+     * picked up when the user signed in.
+     */
+    storedCookies() {
+      const cookies = this.requestManager.cookieStore?.getAllCookies() ?? [];
+      const parts = [];
+      for (const cookie of cookies) {
+        const domain = (cookie.domain ?? "").replace(/^\./, "");
+        if (domain.length > 0 && !MC_DOMAIN.includes(domain)) continue;
+        if (cookie.name) parts.push(`${cookie.name}=${cookie.value}`);
+      }
+      return parts.join("; ");
+    }
+    /**
+     * Opens the login page rather than the homepage. The same WebView both
+     * clears the Cloudflare challenge and lets the user sign in, and the
+     * session it leaves behind unlocks account-gated chapters.
+     */
     async getCloudflareBypassRequestAsync() {
       return App.createRequest({
-        url: `${MC_DOMAIN}/`,
+        url: `${MC_DOMAIN}/wp-login.php`,
         method: "GET",
         headers: {
           "referer": `${MC_DOMAIN}/`,
