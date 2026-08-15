@@ -34,7 +34,7 @@ import {
 } from './ManhwaClubParser'
 
 export const ManhwaClubInfo: SourceInfo = {
-    version: '1.0.0',
+    version: '1.1.0',
     name: 'ManhwaClub',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -68,6 +68,15 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
                         'user-agent': await this.requestManager.getDefaultUserAgent()
                     }
                 }
+
+                // Carry any session the user established in the WebView, so
+                // account-locked chapters are visible.
+                const stored = this.storedCookies()
+                if (stored.length > 0) {
+                    const existing = (request.headers['cookie'] ?? '').trim()
+                    request.headers['cookie'] = existing.length > 0 ? `${stored}; ${existing}` : stored
+                }
+
                 return request
             },
             interceptResponse: async (response: Response): Promise<Response> => {
@@ -80,9 +89,30 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
         return `${MC_DOMAIN}/manga/${mangaId}/`
     }
 
+    /**
+     * Cookies the app holds for this site, including whatever the WebView
+     * picked up when the user signed in.
+     */
+    private storedCookies(): string {
+        const cookies = this.requestManager.cookieStore?.getAllCookies() ?? []
+
+        const parts: string[] = []
+        for (const cookie of cookies) {
+            const domain = (cookie.domain ?? '').replace(/^\./, '')
+            if (domain.length > 0 && !MC_DOMAIN.includes(domain)) continue
+            if (cookie.name) parts.push(`${cookie.name}=${cookie.value}`)
+        }
+        return parts.join('; ')
+    }
+
+    /**
+     * Opens the login page rather than the homepage. The same WebView both
+     * clears the Cloudflare challenge and lets the user sign in, and the
+     * session it leaves behind unlocks account-gated chapters.
+     */
     async getCloudflareBypassRequestAsync(): Promise<Request> {
         return App.createRequest({
-            url: `${MC_DOMAIN}/`,
+            url: `${MC_DOMAIN}/wp-login.php`,
             method: 'GET',
             headers: {
                 'referer': `${MC_DOMAIN}/`,
