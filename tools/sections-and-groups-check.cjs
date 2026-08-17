@@ -2,7 +2,7 @@
  * Covers three reports:
  *   - FullManhwa never showed adult titles (they live at /uncensored)
  *   - both sources should surface a latest-updates listing
- *   - ManhwaClub should separate raw from translated with group buttons
+ *   - ManhwaClub (English) should report only its own track, never the raw one
  */
 const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)'
 const identity = (x) => x
@@ -66,14 +66,16 @@ const check = (label, ok, detail) => {
     check('ManhwaClub has a latest listing', mcSections.some((s) => /latest/i.test(s.title)),
         mcSections.map((s) => s.title).join(', '))
 
+    // This source is the English track only -- the raw track is its own source.
+    // So it must report exactly one group and never carry a [RAW] tag. It used
+    // to be checked for both groups, which only ever held for the combined
+    // source that has since been removed.
     const chapters = await mc.getChapters('manitto')
     const groups = [...new Set(chapters.map((c) => c.group))]
-    check('chapters carry Raw / Translated groups', groups.includes('Raw') && groups.includes('Translated'),
+    check('English source reports a single track', groups.length === 1 && groups.includes('Translated'),
         `groups: ${groups.join(', ')}`)
-    check('raw chapters are tagged in the title', chapters.filter((c) => c.group === 'Raw').every((c) => c.name.includes('[RAW]')),
-        chapters.find((c) => c.group === 'Raw')?.name)
-    check('translated chapters are not tagged', chapters.filter((c) => c.group === 'Translated').every((c) => !c.name.includes('[RAW]')),
-        chapters.find((c) => c.group === 'Translated')?.name)
+    check('translated chapters are not tagged [RAW]', chapters.every((c) => !c.name.includes('[RAW]')),
+        chapters[0]?.name)
 
     process.exit(failures > 0 ? 1 : 0)
 })().catch((error) => { console.error('FAILED:', error.message); process.exit(1) })
