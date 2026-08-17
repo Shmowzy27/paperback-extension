@@ -14887,119 +14887,192 @@ var _Sources = (() => {
   var load = getLoad(parse5, (dom, options) => options._useHtmlParser2 ? esm_default(dom, options) : renderWithParse5(dom));
 
   // src/FullManhwa/FullManhwaParser.ts
-  var FM_DOMAIN = "https://fullmanhwa.com";
-  var FM_PAGE_SIZE = 24;
-  var FM_SECTIONS = [
+  var SM_DOMAIN = "https://saymanhwa.com";
+  var SM_BASE = `${SM_DOMAIN}/en`;
+  var SM_PAGE_SIZE = 24;
+  var SM_SECTIONS = [
     { id: "latest", label: "Latest Releases", path: "/latest" },
     { id: "uncensored", label: "Uncensored (18+)", path: "/uncensored" },
     { id: "popular", label: "Popular", path: "/popular" },
     { id: "completed", label: "Completed", path: "/completed" }
   ];
-  var FM_TYPES = [
+  var SM_ORIGINS = [
     { id: "manhwa", label: "Manhwa" },
     { id: "manhua", label: "Manhua" },
-    { id: "manga", label: "Manga" }
+    { id: "manga", label: "Manga" },
+    { id: "adult", label: "Adult" }
   ];
+  var SM_GENRE_PREFIX = "genre:";
+  var PLACEHOLDER = /^(updating|unknown|none|n\/a|-)$/i;
   var routeFor = (id) => {
-    const section = FM_SECTIONS.find((entry) => entry.id === id);
+    if (id.startsWith(SM_GENRE_PREFIX)) {
+      return `/genres/${id.slice(SM_GENRE_PREFIX.length)}`;
+    }
+    const section = SM_SECTIONS.find((entry) => entry.id === id);
     if (section != void 0) return section.path;
-    const type = FM_TYPES.find((entry) => entry.id === id);
-    return type != void 0 ? `/type/${type.id}` : "/latest";
+    const origin = SM_ORIGINS.find((entry) => entry.id === id);
+    return origin != void 0 ? `/${origin.id}` : "/latest";
+  };
+  var absoluteUrl = (raw) => {
+    const value = (raw ?? "").trim();
+    if (value.length === 0) return "";
+    if (value.startsWith("//")) return `https:${value}`;
+    if (value.startsWith("/")) return `${SM_DOMAIN}${value}`;
+    if (value.startsWith("http://")) return `https://${value.slice(7)}`;
+    return value;
   };
   var parseTiles = ($2) => {
-    const tiles = [];
+    const rows = [];
     const seen = /* @__PURE__ */ new Set();
-    for (const element of $2("a.series-card").toArray()) {
-      const anchor = $2(element);
-      const slug = /^\/manga\/([a-z0-9-]+)\/?$/.exec(anchor.attr("href") ?? "")?.[1];
-      if (!slug || seen.has(slug)) continue;
-      const title = anchor.find("strong").first().text().trim();
+    const grid = $2("section.series-catalog-grid article.series-card").toArray();
+    const elements = grid.length > 0 ? grid : $2("article.series-card").toArray();
+    for (const element of elements) {
+      const card = $2(element);
+      const href = card.find('a[href*="/series/"]').first().attr("href") ?? "";
+      const slug = /\/series\/([^/?#]+)\/?$/.exec(href)?.[1];
+      if (slug == void 0 || seen.has(slug)) continue;
+      const title = card.find(".series-card-body h2").first().text().trim();
       if (title.length === 0) continue;
       seen.add(slug);
-      tiles.push(App.createPartialSourceManga({
-        mangaId: slug,
-        image: (anchor.find("img").first().attr("src") ?? "").trim(),
-        title
-      }));
+      rows.push({
+        slug,
+        title,
+        image: absoluteUrl(card.find("img").first().attr("src"))
+      });
     }
-    return tiles;
+    return rows;
   };
-  var isLastPage = (tiles) => {
-    return tiles.length < FM_PAGE_SIZE;
+  var isLastPage = (rows) => {
+    return rows.length < SM_PAGE_SIZE;
+  };
+  var parseGenres = ($2) => {
+    const genres = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const element of $2('select[name="genre"] option').toArray()) {
+      const option = $2(element);
+      const slug = (option.attr("value") ?? "").trim();
+      const label = option.text().trim();
+      if (slug.length === 0 || label.length === 0 || seen.has(slug)) continue;
+      seen.add(slug);
+      genres.push({ id: `${SM_GENRE_PREFIX}${slug}`, label });
+    }
+    return genres;
+  };
+  var asText = (value) => {
+    return typeof value === "string" ? value.trim() : "";
+  };
+  var seriesLd = ($2) => {
+    for (const element of $2('script[type="application/ld+json"]').toArray()) {
+      const raw = $2(element).text().trim();
+      if (raw.length === 0 || !raw.includes("CreativeWorkSeries")) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed["@type"] === "CreativeWorkSeries") return parsed;
+      } catch {
+      }
+    }
+    return void 0;
+  };
+  var metaValue = ($2, label) => {
+    for (const element of $2(".series-v72-meta div").toArray()) {
+      const row = $2(element);
+      if (row.find("span").first().text().trim().toLowerCase() !== label) continue;
+      return row.find("strong").first().text().trim();
+    }
+    return "";
+  };
+  var namesFrom = (value) => {
+    const names = [];
+    const entries = Array.isArray(value) ? value : [value];
+    for (const entry of entries) {
+      const name = typeof entry === "object" && entry != null ? asText(entry["name"]) : asText(entry);
+      if (name.length === 0 || PLACEHOLDER.test(name) || names.includes(name)) continue;
+      names.push(name);
+    }
+    return names;
   };
   var parseMangaDetails = ($2, mangaId) => {
-    const title = $2("h1").first().text().trim();
-    const image = ($2(".cover-card img").first().attr("src") ?? $2("img").first().attr("src") ?? "").trim();
-    const rawStatus = $2(".status-badge").first().text().trim().toLowerCase();
+    const ld = seriesLd($2);
+    const title = asText(ld?.["name"]) || $2(".series-v72-summary h1").first().text().trim() || $2("h1").first().text().trim() || mangaId;
+    const image = absoluteUrl(asText(ld?.["image"]) || $2(".series-v72-cover img").first().attr("src"));
+    const description = (asText(ld?.["description"]) || $2('meta[name="description"]').attr("content") || "").replace(/\s+/g, " ").trim();
+    const rawStatus = (metaValue($2, "status") || $2(".series-status-badge").first().text()).toLowerCase();
     const status = rawStatus.includes("complet") ? "Completed" : "Ongoing";
-    const description = ($2('meta[name="description"]').attr("content") ?? $2(".series-synopsis, .synopsis, .description").first().text()).replace(/\s+/g, " ").trim();
+    const titles = [title];
+    for (const alt of asText(ld?.["alternateName"]).split(",")) {
+      const name = alt.trim();
+      if (name.length === 0 || PLACEHOLDER.test(name) || titles.includes(name)) continue;
+      titles.push(name);
+    }
     const tags = [];
     const seen = /* @__PURE__ */ new Set();
-    for (const element of $2('a[href^="/type/"]').toArray()) {
-      const slug = /^\/type\/([a-z0-9-]+)\/?$/.exec($2(element).attr("href") ?? "")?.[1];
+    for (const element of $2('.series-v72-genres a, a[href*="/genres/"]').toArray()) {
+      const slug = /\/genres\/([^/?#]+)\/?$/.exec($2(element).attr("href") ?? "")?.[1];
       const label = $2(element).text().trim();
-      if (!slug || !label || seen.has(slug)) continue;
+      if (slug == void 0 || label.length === 0 || seen.has(slug)) continue;
       seen.add(slug);
-      tags.push(App.createTag({ id: slug, label }));
+      tags.push(App.createTag({ id: `${SM_GENRE_PREFIX}${slug}`, label }));
     }
+    if (tags.length === 0) {
+      for (const label of namesFrom(ld?.["genre"])) {
+        const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        if (slug.length === 0 || seen.has(slug)) continue;
+        seen.add(slug);
+        tags.push(App.createTag({ id: `${SM_GENRE_PREFIX}${slug}`, label }));
+      }
+    }
+    const authors = namesFrom(ld?.["author"]);
+    const author = authors.length > 0 ? authors.join(", ") : namesFrom(metaValue($2, "author")).join(", ");
     return App.createSourceManga({
       id: mangaId,
       mangaInfo: App.createMangaInfo({
-        titles: [title],
+        titles,
         image,
         desc: description,
         status,
-        tags: tags.length > 0 ? [App.createTagSection({ id: "type", label: "Type", tags })] : []
+        author,
+        tags: tags.length > 0 ? [App.createTagSection({ id: "genre", label: "Genre", tags })] : []
       })
     });
   };
-  var MONTHS = [
-    "january",
-    "february",
-    "march",
-    "april",
-    "may",
-    "june",
-    "july",
-    "august",
-    "september",
-    "october",
-    "november",
-    "december"
-  ];
   var parseChapterDate = (raw) => {
-    const value = raw.trim();
+    const value = (raw ?? "").trim();
     if (value.length === 0) return void 0;
-    const relative = /^(\d+)\s*([a-z])[a-z]*\s+ago$/i.exec(value);
-    if (relative) {
-      const amount = Number(relative[1]);
-      const unit = relative[2].toLowerCase();
-      const seconds = { s: 1, m: 60, h: 3600, d: 86400, w: 604800, y: 31536e3 };
-      const factor = seconds[unit];
-      return factor != void 0 ? new Date(Date.now() - amount * factor * 1e3) : void 0;
+    const match = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?\s*(Z|[+-]\d{2}:?\d{2})?)?/.exec(value);
+    if (!match) return void 0;
+    const num = (part) => part == void 0 ? 0 : Number(part);
+    let stamp = Date.UTC(
+      num(match[1]),
+      num(match[2]) - 1,
+      num(match[3]),
+      num(match[4]),
+      num(match[5]),
+      num(match[6])
+    );
+    if (isNaN(stamp)) return void 0;
+    const zone = match[7];
+    if (zone != void 0 && zone !== "Z") {
+      const digits = zone.slice(1).replace(":", "");
+      const minutes = Number(digits.slice(0, 2)) * 60 + Number(digits.slice(2));
+      if (isNaN(minutes)) return void 0;
+      stamp -= (zone.startsWith("-") ? -1 : 1) * minutes * 6e4;
     }
-    const absolute = /^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})$/.exec(value);
-    if (!absolute) return void 0;
-    const month = MONTHS.findIndex((name) => name.startsWith(absolute[1].toLowerCase()));
-    if (month < 0) return void 0;
-    const date = new Date(Date.UTC(Number(absolute[3]), month, Number(absolute[2])));
-    return isNaN(date.getTime()) ? void 0 : date;
+    return new Date(stamp);
   };
   var parseChapters = ($2) => {
     const rows = [];
     const seen = /* @__PURE__ */ new Set();
-    for (const element of $2("div.chapter-row").toArray()) {
+    for (const element of $2("a[data-chapter-item]").toArray()) {
       const row = $2(element);
-      const slug = (row.attr("data-chapter-slug") ?? "").trim() || /\/manga\/[^/]+\/([^/?"]+)/.exec(row.find("a.chapter-main").attr("href") ?? "")?.[1] || "";
-      if (slug.length === 0 || seen.has(slug)) continue;
-      const number = Number(row.attr("data-number"));
-      const name = row.find(".chapter-name strong").first().text().trim() || (row.attr("data-title") ?? "").trim() || slug;
+      const slug = /\/series\/[^/]+\/([^/?#]+)\/?$/.exec(row.attr("href") ?? "")?.[1];
+      if (slug == void 0 || seen.has(slug)) continue;
+      const number = Number(row.attr("data-chapter-number"));
       seen.add(slug);
       rows.push({
         slug,
         number: isNaN(number) ? 0 : number,
-        name,
-        time: parseChapterDate(row.find(".chapter-age").first().text())
+        name: row.find("strong").first().text().trim() || slug,
+        time: parseChapterDate(row.find("time").first().attr("datetime"))
       });
     }
     rows.sort((a, b) => a.number - b.number);
@@ -15012,53 +15085,29 @@ var _Sources = (() => {
       sortingIndex: index2
     }));
   };
-  var parseReaderHandle = (html3) => {
-    const box = /<[^>]*data-reader-image-box[^>]*>/.exec(html3)?.[0];
-    if (!box) return void 0;
-    const token = /data-token="([^"]+)"/.exec(box)?.[1];
-    if (!token) return void 0;
-    return {
-      endpoint: /data-endpoint="([^"]+)"/.exec(box)?.[1] ?? "/api/reader_images.php",
-      token,
-      lang: /data-lang="([^"]+)"/.exec(box)?.[1] ?? "en"
-    };
-  };
-  var cookiesFromHeaders = (headers) => {
-    const parts = [];
-    for (const key of Object.keys(headers ?? {})) {
-      if (key.toLowerCase() !== "set-cookie") continue;
-      const value = headers[key];
-      const entries = Array.isArray(value) ? value : String(value).split(/,(?=[^;]+?=)/);
-      for (const entry of entries) {
-        const pair = String(entry).split(";")[0]?.trim();
-        if (pair && pair.includes("=")) parts.push(pair);
-      }
-    }
-    return parts.join("; ");
-  };
-  var parseImagePayload = (body) => {
-    const payload = JSON.parse(body);
-    if (payload.ok !== true || !Array.isArray(payload.images)) {
-      throw new Error(payload.error ?? "The reader session was rejected.");
-    }
+  var parsePages = ($2) => {
     const pages = [];
-    for (const image of payload.images) {
-      const url = (image.url ?? "").trim();
-      if (url.length > 0) pages.push(url);
+    const seen = /* @__PURE__ */ new Set();
+    for (const element of $2(".reader-pages img").toArray()) {
+      const img = $2(element);
+      const url = absoluteUrl(img.attr("data-src") || img.attr("data-original") || img.attr("src"));
+      if (url.length === 0 || seen.has(url)) continue;
+      seen.add(url);
+      pages.push(url);
     }
     return pages;
   };
 
   // src/FullManhwa/FullManhwa.ts
   var FullManhwaInfo = {
-    version: "1.4.0",
-    name: "FullManhwa",
+    version: "2.0.0",
+    name: "SayManhwa",
     icon: "icon.png",
     author: "Shmowzy27",
     authorWebsite: "https://github.com/Shmowzy27",
-    description: "Extension that pulls content from fullmanhwa.com.",
+    description: "Extension that pulls content from saymanhwa.com, the successor to fullmanhwa.com.",
     contentRating: import_types2.ContentRating.ADULT,
-    websiteBaseURL: FM_DOMAIN,
+    websiteBaseURL: SM_DOMAIN,
     sourceTags: [
       {
         text: "18+",
@@ -15077,7 +15126,7 @@ var _Sources = (() => {
             request.headers = {
               ...request.headers ?? {},
               ...{
-                "referer": `${FM_DOMAIN}/`,
+                "referer": `${SM_BASE}/`,
                 "user-agent": await this.requestManager.getDefaultUserAgent()
               }
             };
@@ -15095,7 +15144,7 @@ var _Sources = (() => {
       });
     }
     getMangaShareUrl(mangaId) {
-      return `${FM_DOMAIN}/manga/${mangaId}`;
+      return `${SM_BASE}/series/${mangaId}`;
     }
     /**
      * Cookies the app holds for this site, including whatever the WebView
@@ -15106,7 +15155,7 @@ var _Sources = (() => {
       const parts = [];
       for (const cookie of cookies) {
         const domain = (cookie.domain ?? "").replace(/^\./, "");
-        if (domain.length > 0 && !FM_DOMAIN.includes(domain)) continue;
+        if (domain.length > 0 && !SM_DOMAIN.includes(domain)) continue;
         if (cookie.name) parts.push(`${cookie.name}=${cookie.value}`);
       }
       return parts.join("; ");
@@ -15114,14 +15163,14 @@ var _Sources = (() => {
     /**
      * Opens the login page rather than the homepage. The same WebView both
      * clears the Cloudflare challenge and lets the user sign in, and the
-     * session it leaves behind unlocks account-gated chapters.
+     * session it leaves behind unlocks anything the site puts behind VIP.
      */
     async getCloudflareBypassRequestAsync() {
       return App.createRequest({
-        url: `${FM_DOMAIN}/login`,
+        url: `${SM_BASE}/login`,
         method: "GET",
         headers: {
-          "referer": `${FM_DOMAIN}/`,
+          "referer": `${SM_BASE}/`,
           "user-agent": await this.requestManager.getDefaultUserAgent()
         }
       });
@@ -15148,7 +15197,42 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
       return load((await this.fetch(url)).data);
     }
     listingUrl(id, page) {
-      return `${FM_DOMAIN}${routeFor(id)}?page=${page}`;
+      return `${SM_BASE}${routeFor(id)}?page=${page}`;
+    }
+    /**
+     * Turns parsed rows into tiles, dropping ids the app already holds.
+     *
+     * The tiles are built here from plain rows rather than read back out of a
+     * created PartialSourceManga: the local harnesses stub the App factories as
+     * identity functions, so anything read off a created object round-trips
+     * off-device and then silently fails on the phone.
+     */
+    tilesFrom(rows, seen) {
+      const tiles = [];
+      for (const row of rows) {
+        if (seen.has(row.slug)) continue;
+        seen.add(row.slug);
+        tiles.push(App.createPartialSourceManga({
+          mangaId: row.slug,
+          image: row.image,
+          title: row.title
+        }));
+      }
+      return tiles;
+    }
+    /**
+     * Walks one page of a listing and works out whether to offer another. Paging
+     * stops on a short page, and also when a full page contributed nothing new,
+     * which is what a reordered listing looks like from here.
+     */
+    async pagedListing(url, page, seen) {
+      const rows = parseTiles(await this.loadPage(url));
+      const tiles = this.tilesFrom(rows, seen);
+      const exhausted = isLastPage(rows) || tiles.length === 0;
+      return App.createPagedResults({
+        results: tiles,
+        metadata: exhausted ? void 0 : { page: page + 1, seen: Array.from(seen) }
+      });
     }
     async getMangaDetails(mangaId) {
       return parseMangaDetails(await this.loadPage(this.getMangaShareUrl(mangaId)), mangaId);
@@ -15157,29 +15241,14 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
       return parseChapters(await this.loadPage(this.getMangaShareUrl(mangaId)));
     }
     /**
-     * Pages are not in the chapter HTML. The page carries a token for
-     * /api/reader_images.php, but the token is only accepted alongside the
-     * session cookie that same response set -- with the token alone the API
-     * answers `invalid_token`. So the cookie is captured and replayed here.
+     * Pages come straight out of the chapter HTML now. The rebuilt reader
+     * dropped the token handshake the old site used, so there is no second
+     * request and no session to replay -- the images are plain <img> tags.
      */
     async getChapterDetails(mangaId, chapterId) {
-      const chapterUrl = `${FM_DOMAIN}/manga/${mangaId}/${chapterId}`;
-      const page = await this.fetch(chapterUrl);
-      const handle = parseReaderHandle(page.data);
-      if (handle == void 0) {
-        throw new Error(`Could not find the reader token for ${mangaId}/${chapterId}.`);
-      }
-      const cookie = cookiesFromHeaders(page.headers ?? {});
-      const apiUrl = `${FM_DOMAIN}${handle.endpoint}?token=${encodeURIComponent(handle.token)}&lang=${encodeURIComponent(handle.lang)}`;
-      const headers = {
-        "referer": chapterUrl,
-        "x-requested-with": "XMLHttpRequest",
-        "cache-control": "no-cache"
-      };
-      if (cookie.length > 0) headers["cookie"] = cookie;
-      const pages = parseImagePayload((await this.fetch(apiUrl, headers)).data);
+      const pages = parsePages(await this.loadPage(`${SM_BASE}/series/${mangaId}/${chapterId}`));
       if (pages.length === 0) {
-        throw new Error(`No pages were returned for ${mangaId}/${chapterId}.`);
+        throw new Error(`No pages were found for ${mangaId}/${chapterId}. The chapter may be VIP-only -- press the cloud icon on the source homepage and sign in.`);
       }
       return App.createChapterDetails({
         id: chapterId,
@@ -15189,34 +15258,49 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
     }
     async getSearchResults(query, metadata) {
       const page = metadata?.page ?? 1;
+      const seen = new Set(metadata?.seen ?? []);
+      const title = (query.title ?? "").trim();
       const selected = (query.includedTags ?? [])[0]?.id;
-      const url = query.title ? `${FM_DOMAIN}/search?q=${encodeURIComponent(query.title)}&page=${page}` : this.listingUrl(selected ?? "latest", page);
-      const tiles = parseTiles(await this.loadPage(url));
-      return App.createPagedResults({
-        results: tiles,
-        metadata: isLastPage(tiles) ? void 0 : { page: page + 1 }
-      });
+      const url = title.length > 0 ? `${SM_BASE}/series?q=${encodeURIComponent(title)}&page=${page}` : this.listingUrl(selected ?? "latest", page);
+      return this.pagedListing(url, page, seen);
     }
-    /** The site offers no way to exclude a type, so exclusion is not claimed. */
+    /** The site offers no way to exclude a genre, so exclusion is not claimed. */
     async supportsTagExclusion() {
       return false;
     }
+    /**
+     * The genre list is read off the catalog filter rather than hardcoded, so it
+     * tracks the site. If that request fails the browse and origin filters are
+     * still offered rather than leaving the user with no filters at all.
+     */
     async getSearchTags() {
-      return [
+      const sections = [
         App.createTagSection({
           id: "browse",
           label: "Browse",
-          tags: FM_SECTIONS.map((entry) => App.createTag({ id: entry.id, label: entry.label }))
+          tags: SM_SECTIONS.map((entry) => App.createTag({ id: entry.id, label: entry.label }))
         }),
         App.createTagSection({
-          id: "type",
+          id: "origin",
           label: "Type",
-          tags: FM_TYPES.map((type) => App.createTag({ id: type.id, label: type.label }))
+          tags: SM_ORIGINS.map((entry) => App.createTag({ id: entry.id, label: entry.label }))
         })
       ];
+      try {
+        const genres = parseGenres(await this.loadPage(`${SM_BASE}/latest`));
+        if (genres.length > 0) {
+          sections.push(App.createTagSection({
+            id: "genre",
+            label: "Genre",
+            tags: genres.map((genre) => App.createTag({ id: genre.id, label: genre.label }))
+          }));
+        }
+      } catch {
+      }
+      return sections;
     }
     async getHomePageSections(sectionCallback) {
-      for (const entry of FM_SECTIONS) {
+      for (const entry of SM_SECTIONS) {
         const section = App.createHomeSection({
           id: entry.id,
           title: entry.label,
@@ -15224,17 +15308,15 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
           containsMoreItems: true,
           items: []
         });
-        section.items = parseTiles(await this.loadPage(this.listingUrl(entry.id, 1)));
+        const rows = parseTiles(await this.loadPage(this.listingUrl(entry.id, 1)));
+        section.items = this.tilesFrom(rows, /* @__PURE__ */ new Set());
         sectionCallback(section);
       }
     }
     async getViewMoreItems(homepageSectionId, metadata) {
       const page = metadata?.page ?? 1;
-      const tiles = parseTiles(await this.loadPage(this.listingUrl(homepageSectionId, page)));
-      return App.createPagedResults({
-        results: tiles,
-        metadata: isLastPage(tiles) ? void 0 : { page: page + 1 }
-      });
+      const seen = new Set(metadata?.seen ?? []);
+      return this.pagedListing(this.listingUrl(homepageSectionId, page), page, seen);
     }
   };
   return __toCommonJS(FullManhwa_exports);
