@@ -10,6 +10,7 @@ import {
     HomeSectionType,
     MangaProviding,
     PagedResults,
+    PartialSourceManga,
     Request,
     Response,
     SearchRequest,
@@ -23,28 +24,36 @@ import {
 import * as cheerio from 'cheerio'
 
 import {
-    cookiesFromHeaders,
-    FM_DOMAIN,
-    FM_SECTIONS,
-    FM_TYPES,
     isLastPage,
     parseChapters,
-    parseImagePayload,
+    parseGenres,
     parseMangaDetails,
-    parseReaderHandle,
+    parsePages,
     parseTiles,
-    routeFor
+    routeFor,
+    SM_BASE,
+    SM_DOMAIN,
+    SM_ORIGINS,
+    SM_SECTIONS,
+    TileRow
 } from './FullManhwaParser'
 
+/**
+ * The source keeps its FullManhwa identity on purpose. Paperback keys a user's
+ * library, reading progress and downloads on the bundle id, which comes from
+ * this directory name -- renaming it would orphan every entry. fullmanhwa.com
+ * simply became saymanhwa.com, and the slugs that survived the move still
+ * resolve, so the existing library keeps working.
+ */
 export const FullManhwaInfo: SourceInfo = {
-    version: '1.4.0',
-    name: 'FullManhwa',
+    version: '2.0.0',
+    name: 'SayManhwa',
     icon: 'icon.png',
     author: 'Shmowzy27',
     authorWebsite: 'https://github.com/Shmowzy27',
-    description: 'Extension that pulls content from fullmanhwa.com.',
+    description: 'Extension that pulls content from saymanhwa.com, the successor to fullmanhwa.com.',
     contentRating: ContentRating.ADULT,
-    websiteBaseURL: FM_DOMAIN,
+    websiteBaseURL: SM_DOMAIN,
     sourceTags: [
         {
             text: '18+',
@@ -52,6 +61,17 @@ export const FullManhwaInfo: SourceInfo = {
         }
     ],
     intents: SourceIntents.MANGA_CHAPTERS | SourceIntents.HOMEPAGE_SECTIONS | SourceIntents.CLOUDFLARE_BYPASS_REQUIRED
+}
+
+/**
+ * Listings are paged by `?page=`, and the ids already handed out travel along so
+ * a later page can drop anything the app has seen. That is what keeps an
+ * infinite scroll from repeating titles when the site reorders a listing between
+ * requests -- `/latest` reshuffles as chapters land.
+ */
+interface ListingMetadata {
+    page?: number
+    seen?: string[]
 }
 
 export class FullManhwa implements SearchResultsProviding, MangaProviding, ChapterProviding, HomePageSectionsProviding, CloudflareBypassRequestProviding {
@@ -63,7 +83,7 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
                 request.headers = {
                     ...(request.headers ?? {}),
                     ...{
-                        'referer': `${FM_DOMAIN}/`,
+                        'referer': `${SM_BASE}/`,
                         'user-agent': await this.requestManager.getDefaultUserAgent()
                     }
                 }
@@ -86,7 +106,7 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
     })
 
     getMangaShareUrl(mangaId: string): string {
-        return `${FM_DOMAIN}/manga/${mangaId}`
+        return `${SM_BASE}/series/${mangaId}`
     }
 
     /**
@@ -99,7 +119,7 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
         const parts: string[] = []
         for (const cookie of cookies) {
             const domain = (cookie.domain ?? '').replace(/^\./, '')
-            if (domain.length > 0 && !FM_DOMAIN.includes(domain)) continue
+            if (domain.length > 0 && !SM_DOMAIN.includes(domain)) continue
             if (cookie.name) parts.push(`${cookie.name}=${cookie.value}`)
         }
         return parts.join('; ')
@@ -108,14 +128,14 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
     /**
      * Opens the login page rather than the homepage. The same WebView both
      * clears the Cloudflare challenge and lets the user sign in, and the
-     * session it leaves behind unlocks account-gated chapters.
+     * session it leaves behind unlocks anything the site puts behind VIP.
      */
     async getCloudflareBypassRequestAsync(): Promise<Request> {
         return App.createRequest({
-            url: `${FM_DOMAIN}/login`,
+            url: `${SM_BASE}/login`,
             method: 'GET',
             headers: {
-                'referer': `${FM_DOMAIN}/`,
+                'referer': `${SM_BASE}/`,
                 'user-agent': await this.requestManager.getDefaultUserAgent()
             }
         })
@@ -149,7 +169,49 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
     }
 
     private listingUrl(id: string, page: number): string {
-        return `${FM_DOMAIN}${routeFor(id)}?page=${page}`
+        return `${SM_BASE}${routeFor(id)}?page=${page}`
+    }
+
+    /**
+     * Turns parsed rows into tiles, dropping ids the app already holds.
+     *
+     * The tiles are built here from plain rows rather than read back out of a
+     * created PartialSourceManga: the local harnesses stub the App factories as
+     * identity functions, so anything read off a created object round-trips
+     * off-device and then silently fails on the phone.
+     */
+    private tilesFrom(rows: TileRow[], seen: Set<string>): PartialSourceManga[] {
+        const tiles: PartialSourceManga[] = []
+
+        for (const row of rows) {
+            if (seen.has(row.slug)) continue
+            seen.add(row.slug)
+
+            tiles.push(App.createPartialSourceManga({
+                mangaId: row.slug,
+                image: row.image,
+                title: row.title
+            }))
+        }
+
+        return tiles
+    }
+
+    /**
+     * Walks one page of a listing and works out whether to offer another. Paging
+     * stops on a short page, and also when a full page contributed nothing new,
+     * which is what a reordered listing looks like from here.
+     */
+    private async pagedListing(url: string, page: number, seen: Set<string>): Promise<PagedResults> {
+        const rows = parseTiles(await this.loadPage(url))
+        const tiles = this.tilesFrom(rows, seen)
+
+        const exhausted = isLastPage(rows) || tiles.length === 0
+
+        return App.createPagedResults({
+            results: tiles,
+            metadata: exhausted ? undefined : { page: page + 1, seen: Array.from(seen) }
+        })
     }
 
     async getMangaDetails(mangaId: string): Promise<SourceManga> {
@@ -161,33 +223,15 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
     }
 
     /**
-     * Pages are not in the chapter HTML. The page carries a token for
-     * /api/reader_images.php, but the token is only accepted alongside the
-     * session cookie that same response set -- with the token alone the API
-     * answers `invalid_token`. So the cookie is captured and replayed here.
+     * Pages come straight out of the chapter HTML now. The rebuilt reader
+     * dropped the token handshake the old site used, so there is no second
+     * request and no session to replay -- the images are plain <img> tags.
      */
     async getChapterDetails(mangaId: string, chapterId: string): Promise<ChapterDetails> {
-        const chapterUrl = `${FM_DOMAIN}/manga/${mangaId}/${chapterId}`
-        const page = await this.fetch(chapterUrl)
+        const pages = parsePages(await this.loadPage(`${SM_BASE}/series/${mangaId}/${chapterId}`))
 
-        const handle = parseReaderHandle(page.data as string)
-        if (handle == undefined) {
-            throw new Error(`Could not find the reader token for ${mangaId}/${chapterId}.`)
-        }
-
-        const cookie = cookiesFromHeaders(page.headers ?? {})
-        const apiUrl = `${FM_DOMAIN}${handle.endpoint}?token=${encodeURIComponent(handle.token)}&lang=${encodeURIComponent(handle.lang)}`
-
-        const headers: Record<string, string> = {
-            'referer': chapterUrl,
-            'x-requested-with': 'XMLHttpRequest',
-            'cache-control': 'no-cache'
-        }
-        if (cookie.length > 0) headers['cookie'] = cookie
-
-        const pages = parseImagePayload((await this.fetch(apiUrl, headers)).data as string)
         if (pages.length === 0) {
-            throw new Error(`No pages were returned for ${mangaId}/${chapterId}.`)
+            throw new Error(`No pages were found for ${mangaId}/${chapterId}. The chapter may be VIP-only -- press the cloud icon on the source homepage and sign in.`)
         }
 
         return App.createChapterDetails({
@@ -197,47 +241,66 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
         })
     }
 
-    async getSearchResults(query: SearchRequest, metadata: { page?: number } | undefined): Promise<PagedResults> {
+    async getSearchResults(query: SearchRequest, metadata: ListingMetadata | undefined): Promise<PagedResults> {
         const page = metadata?.page ?? 1
+        const seen = new Set(metadata?.seen ?? [])
+
+        const title = (query.title ?? '').trim()
         const selected = (query.includedTags ?? [])[0]?.id
 
-        // Titles go through search; a bare selection browses that listing.
-        const url = query.title
-            ? `${FM_DOMAIN}/search?q=${encodeURIComponent(query.title)}&page=${page}`
+        // A title goes through the catalog's own `q`; a bare tag selection
+        // browses that listing instead.
+        const url = title.length > 0
+            ? `${SM_BASE}/series?q=${encodeURIComponent(title)}&page=${page}`
             : this.listingUrl(selected ?? 'latest', page)
 
-        const tiles = parseTiles(await this.loadPage(url))
-
-        return App.createPagedResults({
-            results: tiles,
-            metadata: isLastPage(tiles) ? undefined : { page: page + 1 }
-        })
+        return this.pagedListing(url, page, seen)
     }
 
-    /** The site offers no way to exclude a type, so exclusion is not claimed. */
+    /** The site offers no way to exclude a genre, so exclusion is not claimed. */
     async supportsTagExclusion(): Promise<boolean> {
         return false
     }
 
+    /**
+     * The genre list is read off the catalog filter rather than hardcoded, so it
+     * tracks the site. If that request fails the browse and origin filters are
+     * still offered rather than leaving the user with no filters at all.
+     */
     async getSearchTags(): Promise<TagSection[]> {
-        return [
+        const sections: TagSection[] = [
             App.createTagSection({
                 id: 'browse',
                 label: 'Browse',
-                tags: FM_SECTIONS.map((entry) => App.createTag({ id: entry.id, label: entry.label }))
+                tags: SM_SECTIONS.map((entry) => App.createTag({ id: entry.id, label: entry.label }))
             }),
             App.createTagSection({
-                id: 'type',
+                id: 'origin',
                 label: 'Type',
-                tags: FM_TYPES.map((type) => App.createTag({ id: type.id, label: type.label }))
+                tags: SM_ORIGINS.map((entry) => App.createTag({ id: entry.id, label: entry.label }))
             })
         ]
+
+        try {
+            const genres = parseGenres(await this.loadPage(`${SM_BASE}/latest`))
+            if (genres.length > 0) {
+                sections.push(App.createTagSection({
+                    id: 'genre',
+                    label: 'Genre',
+                    tags: genres.map((genre) => App.createTag({ id: genre.id, label: genre.label }))
+                }))
+            }
+        } catch {
+            // Leaves the static sections in place.
+        }
+
+        return sections
     }
 
     async getHomePageSections(sectionCallback: (section: HomeSection) => void): Promise<void> {
         // Reported once each, only after items are attached: a section with an
         // unset `items` crashes the app when it reads the list.
-        for (const entry of FM_SECTIONS) {
+        for (const entry of SM_SECTIONS) {
             const section = App.createHomeSection({
                 id: entry.id,
                 title: entry.label,
@@ -246,18 +309,16 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
                 items: []
             })
 
-            section.items = parseTiles(await this.loadPage(this.listingUrl(entry.id, 1)))
+            const rows = parseTiles(await this.loadPage(this.listingUrl(entry.id, 1)))
+            section.items = this.tilesFrom(rows, new Set<string>())
             sectionCallback(section)
         }
     }
 
-    async getViewMoreItems(homepageSectionId: string, metadata: { page?: number } | undefined): Promise<PagedResults> {
+    async getViewMoreItems(homepageSectionId: string, metadata: ListingMetadata | undefined): Promise<PagedResults> {
         const page = metadata?.page ?? 1
-        const tiles = parseTiles(await this.loadPage(this.listingUrl(homepageSectionId, page)))
+        const seen = new Set(metadata?.seen ?? [])
 
-        return App.createPagedResults({
-            results: tiles,
-            metadata: isLastPage(tiles) ? undefined : { page: page + 1 }
-        })
+        return this.pagedListing(this.listingUrl(homepageSectionId, page), page, seen)
     }
 }

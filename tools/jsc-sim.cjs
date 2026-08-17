@@ -13,8 +13,7 @@ const vm = require('node:vm')
 const fs = require('node:fs')
 const path = require('node:path')
 
-const BUNDLE = path.join(__dirname, '..', 'bundles', 'HentaiNexus', 'source.js')
-const SOURCE = 'HentaiNexus'
+const BUNDLES = path.join(__dirname, '..', 'bundles')
 const REQUIRED_METHODS = [
     'getMangaDetails',
     'getChapters',
@@ -48,28 +47,47 @@ function fail(message) {
     process.exit(1)
 }
 
-if (!fs.existsSync(BUNDLE)) fail(`bundle not found at ${BUNDLE}; run "npm run bundle" first`)
+if (!fs.existsSync(BUNDLES)) fail(`no bundles directory at ${BUNDLES}; run "npm run bundle" first`)
 
-const context = vm.createContext({ App: stubApp(), console })
+// Every bundled source is checked, not just one: each ships its own copy of the
+// dependencies, so one source can be taken down by a module-scope Node global
+// while the others stay fine.
+const names = fs.readdirSync(BUNDLES, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(BUNDLES, entry.name, 'source.js')))
+    .map((entry) => entry.name)
 
-try {
-    new vm.Script(fs.readFileSync(BUNDLE, 'utf8'), { filename: BUNDLE }).runInContext(context)
-} catch (error) {
-    fail(`bundle threw while evaluating: ${error.constructor.name}: ${error.message}`)
+if (names.length === 0) fail(`no source.js found under ${BUNDLES}; run "npm run bundle" first`)
+
+for (const name of names) {
+    const bundle = path.join(BUNDLES, name, 'source.js')
+    const context = vm.createContext({ App: stubApp(), console })
+
+    try {
+        new vm.Script(fs.readFileSync(bundle, 'utf8'), { filename: bundle }).runInContext(context)
+    } catch (error) {
+        fail(`${name} threw while evaluating: ${error.constructor.name}: ${error.message}`)
+    }
+
+    const sources = context.Sources
+    if (!sources) fail(`${name} evaluated but never defined Sources`)
+
+    // The bundle names its own export, which need not match the directory.
+    const exported = Object.keys(sources).filter((key) => typeof sources[key] === 'function')
+    if (exported.length === 0) fail(`${name} defined Sources but exported no class`)
+
+    for (const key of exported) {
+        let instance
+        try {
+            instance = new sources[key]()
+        } catch (error) {
+            fail(`${name}.${key} constructor threw: ${error.constructor.name}: ${error.message}`)
+        }
+
+        const missing = REQUIRED_METHODS.filter((method) => typeof instance[method] !== 'function')
+        if (missing.length > 0) fail(`${name}.${key} missing methods: ${missing.join(', ')}`)
+    }
+
+    console.log(`OK: ${name} evaluates and exposes all ${REQUIRED_METHODS.length} methods without Node globals`)
 }
 
-const sources = context.Sources
-if (!sources) fail('bundle evaluated but never defined Sources')
-if (!sources[SOURCE]) fail(`Sources.${SOURCE} is undefined`)
-
-let instance
-try {
-    instance = new sources[SOURCE]()
-} catch (error) {
-    fail(`constructor threw: ${error.constructor.name}: ${error.message}`)
-}
-
-const missing = REQUIRED_METHODS.filter((name) => typeof instance[name] !== 'function')
-if (missing.length > 0) fail(`missing methods: ${missing.join(', ')}`)
-
-console.log(`OK: ${SOURCE} evaluates and exposes all ${REQUIRED_METHODS.length} methods without Node globals`)
+console.log(`OK: ${names.length} bundled sources pass`)
