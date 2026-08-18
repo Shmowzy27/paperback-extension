@@ -46,7 +46,7 @@ import {
  * resolve, so the existing library keeps working.
  */
 export const FullManhwaInfo: SourceInfo = {
-    version: '2.0.0',
+    version: '2.1.0',
     name: 'SayManhwa',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -77,7 +77,11 @@ interface ListingMetadata {
 export class FullManhwa implements SearchResultsProviding, MangaProviding, ChapterProviding, HomePageSectionsProviding, CloudflareBypassRequestProviding {
     requestManager = App.createRequestManager({
         requestsPerSecond: 3,
-        requestTimeout: 30000,
+        // The sites answer slowly under the sustained load of a whole-library
+        // refresh -- saymanhwa was measured at a 7s ninetieth percentile and a
+        // 20s worst case -- so a thirty second ceiling turned slow-but-fine
+        // responses into refresh failures.
+        requestTimeout: 60000,
         interceptor: {
             interceptRequest: async (request: Request): Promise<Request> => {
                 request.headers = {
@@ -159,7 +163,7 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
 
     private async fetch(url: string, headers?: Record<string, string>): Promise<Response> {
         const request = App.createRequest({ url: url, method: 'GET', headers: headers })
-        const response = await this.requestManager.schedule(request, 1)
+        const response = await this.requestManager.schedule(request, 3)
         this.checkCloudflare(response.status)
         return response
     }

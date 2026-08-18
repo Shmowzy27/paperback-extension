@@ -35,7 +35,7 @@ import {
 } from './ManhwaClubParser'
 
 export const ManhwaClubInfo: SourceInfo = {
-    version: '2.4.0',
+    version: '2.5.0',
     name: 'ManhwaClub (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -59,7 +59,11 @@ const SECTION_NEW = 'new-manga'
 export class ManhwaClub implements SearchResultsProviding, MangaProviding, ChapterProviding, HomePageSectionsProviding, CloudflareBypassRequestProviding {
     requestManager = App.createRequestManager({
         requestsPerSecond: 3,
-        requestTimeout: 30000,
+        // The sites answer slowly under the sustained load of a whole-library
+        // refresh -- saymanhwa was measured at a 7s ninetieth percentile and a
+        // 20s worst case -- so a thirty second ceiling turned slow-but-fine
+        // responses into refresh failures.
+        requestTimeout: 60000,
         interceptor: {
             interceptRequest: async (request: Request): Promise<Request> => {
                 request.headers = {
@@ -140,7 +144,7 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
 
     private async fetchHtml(url: string): Promise<string> {
         const request = App.createRequest({ url: url, method: 'GET' })
-        const response = await this.requestManager.schedule(request, 1)
+        const response = await this.requestManager.schedule(request, 3)
         this.checkCloudflare(response.status)
         return response.data as string
     }
@@ -188,7 +192,7 @@ export class ManhwaClub implements SearchResultsProviding, MangaProviding, Chapt
             data: `action=manga_get_chapters&manga=${postId}`
         })
 
-        const response = await this.requestManager.schedule(request, 1)
+        const response = await this.requestManager.schedule(request, 3)
         this.checkCloudflare(response.status)
 
         return filterTrack(parseChapters(cheerio.load(response.data as string), mangaId), 'Translated')
