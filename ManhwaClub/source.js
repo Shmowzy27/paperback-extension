@@ -15084,7 +15084,7 @@ var _Sources = (() => {
 
   // src/ManhwaClub/ManhwaClub.ts
   var ManhwaClubInfo = {
-    version: "2.4.0",
+    version: "2.5.0",
     name: "ManhwaClub (English)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15107,7 +15107,11 @@ var _Sources = (() => {
     constructor() {
       this.requestManager = App.createRequestManager({
         requestsPerSecond: 3,
-        requestTimeout: 3e4,
+        // The sites answer slowly under the sustained load of a whole-library
+        // refresh -- saymanhwa was measured at a 7s ninetieth percentile and a
+        // 20s worst case -- so a thirty second ceiling turned slow-but-fine
+        // responses into refresh failures.
+        requestTimeout: 6e4,
         interceptor: {
           interceptRequest: async (request) => {
             request.headers = {
@@ -15176,7 +15180,7 @@ Please go to the homepage of <${ManhwaClubInfo.name}> and press the cloud icon.`
     }
     async fetchHtml(url) {
       const request = App.createRequest({ url, method: "GET" });
-      const response = await this.requestManager.schedule(request, 1);
+      const response = await this.requestManager.schedule(request, 3);
       this.checkCloudflare(response.status);
       return response.data;
     }
@@ -15214,7 +15218,7 @@ Please go to the homepage of <${ManhwaClubInfo.name}> and press the cloud icon.`
         },
         data: `action=manga_get_chapters&manga=${postId}`
       });
-      const response = await this.requestManager.schedule(request, 1);
+      const response = await this.requestManager.schedule(request, 3);
       this.checkCloudflare(response.status);
       return filterTrack(parseChapters(load(response.data), mangaId), "Translated");
     }
