@@ -111,8 +111,18 @@ export const isSeriesId = (mangaId: string): boolean => mangaId.startsWith(SERIE
 
 export const baseFromSeriesId = (mangaId: string): string => mangaId.slice(SERIES_PREFIX.length)
 
-/** Collapses every volume on a page into a single entry per series. */
-export const groupIntoSeries = (cards: GalleryCard[]): PartialSourceManga[] => {
+/**
+ * Collapses every volume on a page into a single entry per series.
+ *
+ * `seen` carries the series already emitted by earlier pages. Grouping only
+ * ever sees one page at a time, so a series straddling a page boundary was
+ * emitted again on the next page under the very same id -- volume 5 landing on
+ * page 1 and volumes 1-4 on page 2 showed the series twice while scrolling an
+ * artist's works. Whichever page it appears on first wins; opening it still
+ * lists every volume, because the volumes are looked up by title rather than
+ * taken from the page.
+ */
+export const groupIntoSeries = (cards: GalleryCard[], seen?: Set<string>): PartialSourceManga[] => {
     const series = new Map<string, { base: string; volume: number; card: GalleryCard }>()
 
     for (const card of cards) {
@@ -130,7 +140,12 @@ export const groupIntoSeries = (cards: GalleryCard[]): PartialSourceManga[] => {
     }
 
     const results: PartialSourceManga[] = []
-    for (const entry of series.values()) {
+    for (const [key, entry] of series) {
+        if (seen != undefined) {
+            if (seen.has(key)) continue
+            seen.add(key)
+        }
+
         results.push(App.createPartialSourceManga({
             mangaId: `${SERIES_PREFIX}${entry.base}`,
             image: entry.card.thumbnailUrl,
@@ -155,8 +170,25 @@ export const volumesOf = (cards: GalleryCard[], base: string): SeriesVolume[] =>
     return volumes
 }
 
-/** The site's own search syntax; quotes inside the title would break the term. */
-export const seriesQuery = (base: string): string => `title:"${base.replace(/"/g, '')}"`
+/**
+ * The site's own search syntax.
+ *
+ * The phrase is stripped to letters and numbers first. The search rejects a
+ * quoted phrase that still carries punctuation and answers "No results found",
+ * which reached the user as `No volumes found for "..."` on any title holding a
+ * dash -- a subtitle wrapped in dashes is a common style here, so this hit a
+ * lot of galleries. The site matches on normalised text itself, so the stripped
+ * phrase still finds the gallery, and volumesOf re-checks the real title
+ * afterwards, which keeps the grouping exact.
+ *
+ * Letters are matched by unicode property, so a non-Latin title is not gutted.
+ */
+export const seriesQuery = (base: string): string => {
+    const phrase = base.replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+
+    // A title made only of punctuation would leave nothing to search for.
+    return `title:"${phrase.length > 0 ? phrase : base.replace(/"/g, '')}"`
+}
 
 /**
  * Filterable categories, each backed by /explore/categories/{prefix}. `author`

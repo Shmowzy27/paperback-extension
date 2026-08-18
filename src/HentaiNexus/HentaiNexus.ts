@@ -45,7 +45,7 @@ import {
 } from './HentaiNexusParser'
 
 export const HentaiNexusInfo: SourceInfo = {
-    version: '1.5.0',
+    version: '1.6.0',
     name: 'HentaiNexus',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -64,6 +64,17 @@ export const HentaiNexusInfo: SourceInfo = {
 
 const SECTION_NEW = 'new'
 const SECTION_POPULAR = 'popular'
+
+/**
+ * Listings page with `?page=`, and the series already handed out travel along so
+ * a later page can drop one it has emitted before. Grouping only ever sees a
+ * single page, so without this a series straddling a page boundary appeared
+ * twice while scrolling.
+ */
+interface ListingMetadata {
+    page?: number
+    seen?: string[]
+}
 
 export class HentaiNexus implements SearchResultsProviding, MangaProviding, ChapterProviding, HomePageSectionsProviding, CloudflareBypassRequestProviding {
     requestManager = App.createRequestManager({
@@ -207,8 +218,9 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
         })
     }
 
-    async getSearchResults(query: SearchRequest, metadata: { page?: number } | undefined): Promise<PagedResults> {
+    async getSearchResults(query: SearchRequest, metadata: ListingMetadata | undefined): Promise<PagedResults> {
         const page = metadata?.page ?? 1
+        const seen = new Set(metadata?.seen ?? [])
 
         // Selected filters become the site's own `prefix:value` terms, with a
         // leading minus for exclusions. A typed query passes straight through,
@@ -224,10 +236,12 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
 
         const cards = parseCards(await this.loadPage(this.listingUrl(page, terms.join(' '))))
 
+        const results = groupIntoSeries(cards, seen)
+
         return App.createPagedResults({
-            results: groupIntoSeries(cards),
+            results: results,
             // Paging is judged on raw cards; grouping shrinks the visible count.
-            metadata: isLastPage(cards) ? undefined : { page: page + 1 }
+            metadata: isLastPage(cards) ? undefined : { page: page + 1, seen: Array.from(seen) }
         })
     }
 
@@ -294,17 +308,19 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
         }
     }
 
-    async getViewMoreItems(homepageSectionId: string, metadata: { page?: number } | undefined): Promise<PagedResults> {
+    async getViewMoreItems(homepageSectionId: string, metadata: ListingMetadata | undefined): Promise<PagedResults> {
         if (homepageSectionId !== SECTION_NEW) {
             return App.createPagedResults({ results: [] })
         }
 
         const page = metadata?.page ?? 1
+        const seen = new Set(metadata?.seen ?? [])
         const cards = parseCards(await this.loadPage(this.listingUrl(page)))
+        const results = groupIntoSeries(cards, seen)
 
         return App.createPagedResults({
-            results: groupIntoSeries(cards),
-            metadata: isLastPage(cards) ? undefined : { page: page + 1 }
+            results: results,
+            metadata: isLastPage(cards) ? undefined : { page: page + 1, seen: Array.from(seen) }
         })
     }
 }
