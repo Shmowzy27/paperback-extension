@@ -109,20 +109,39 @@ const ARTIST = 'Mahiro Ootori'
         ids.some((id) => id === `${STRADDLING}: Complete Collection`),
         ids.filter((id) => id.startsWith(STRADDLING)).join(' | '))
 
-    // ---- season/episode grouping ----
-    // This artist numbers one work as "... Season N ep.M", which matched no
-    // volume pattern at all, so every episode stood as its own entry.
-    const seasons = ids.filter((id) => /^s:My Harem in Another World Season \d+$/.test(id))
-    check('season/episode volumes collapse into one entry per season', seasons.length === 2,
-        seasons.join(' | ') || 'none')
-
-    const strays = ids.filter((id) => /ep\.?\s*\d/i.test(id))
-    check('no bare episode is left as its own entry', strays.length === 0,
+    // ---- season/episode folding ----
+    // Seasons fold into the work itself, so no bare season or episode should
+    // survive as an entry of its own.
+    // Anthologies keep "Season N" in their own name and are meant to stay
+    // separate, so they are not strays.
+    const strays = ids.filter((id) => /season\s*\d|ep\.?\s*\d/i.test(id)
+        && !/anthology|side story|collection/i.test(id))
+    check('no season or episode is left as its own entry', strays.length === 0,
         strays.join(' | ') || 'none left')
 
-    const s3 = await s.getChapters('s:My Harem in Another World Season 3')
-    check('a season lists its episodes as chapters', s3.length === 4,
-        `${s3.length} episodes: ${s3.map((c) => c.chapNum).join(',')}`)
+    const harem = await s.getChapters('s:My Harem in Another World')
+    const nums = harem.map((c) => c.chapNum)
+    check('every season folds into the one series', harem.length >= 12,
+        `${harem.length} chapters: ${nums.join(',')}`)
+    check('season episodes are ordered across seasons',
+        nums.some((n) => n > 2 && n < 3) && nums.some((n) => n > 3 && n < 4)
+        && nums.every((n, i) => i === 0 || nums[i - 1] <= n),
+        nums.join(','))
+    check('the anthologies stay out of the series',
+        harem.every((c) => !/anthology|side story/i.test(c.name)),
+        harem.map((c) => c.name).find((n) => /anthology|side story/i.test(n)) || 'none present')
+
+    // ---- subtitled sequels ----
+    const pkg = ids.filter((id) => /^s:Sex Friend Sisters/i.test(id))
+    check('subtitled sequels merge into one entry', pkg.length === 1, pkg.join(' | ') || 'none')
+
+    const pkgChapters = await s.getChapters(pkg[0] || 's:Sex Friend Sisters are a Package Deal')
+    check('unnumbered sequels are numbered off in sequence',
+        pkgChapters.length === 4 && pkgChapters.map((c) => c.chapNum).join(',') === '1,2,3,4',
+        `${pkgChapters.length} chapters: ${pkgChapters.map((c) => c.chapNum).join(',')}`)
+    check('the original instalment leads, not a subtitled sequel',
+        pkgChapters[0] != undefined && !pkgChapters[0].name.includes(':'),
+        pkgChapters[0]?.name)
 
     console.log(failures > 0 ? `\n${failures} check(s) failed` : '\nall checks passed')
     process.exit(failures > 0 ? 1 : 0)

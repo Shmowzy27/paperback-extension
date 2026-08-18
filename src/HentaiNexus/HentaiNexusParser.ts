@@ -88,6 +88,26 @@ const VOLUME_PATTERNS: RegExp[] = [
 ]
 
 /**
+ * "... Season 3 ep.4: Subtitle". Season and episode fold into a single number
+ * so that every season of a work lands in one series rather than one entry per
+ * season: season 3 episode 4 becomes 3.04.
+ *
+ * The episode is divided by a hundred rather than ten so episode 10 still
+ * sorts after episode 9 -- 3.10 would otherwise read as the smaller 3.1.
+ *
+ * Checked before the patterns above, which would otherwise stop at the season
+ * and leave the base as "... Season 3".
+ */
+const SEASON_EPISODE = new RegExp(`^(.*?\\S)\\s+season\\s*(\\d{1,2})\\s*(?:ep\\.?|episode)\\s*(\\d{1,3})${SUBTITLE}$`, 'i')
+
+/**
+ * Suffixes that mark a compilation rather than a further instalment. The site
+ * sells these as their own product, so they stay their own entry instead of
+ * being folded into the series they collect.
+ */
+const COMPILATION = new RegExp('\\b(anthology|side stor(?:y|ies)|complete collection|collection|omnibus|bundle|box set)\\b', 'i')
+
+/**
  * The site has no series field, so volumes are inferred from the title: a
  * trailing volume number is stripped and what precedes it is the series.
  * "Bedded by Your Best Friend 5" -> base "Bedded by Your Best Friend", volume 5.
@@ -97,6 +117,16 @@ const VOLUME_PATTERNS: RegExp[] = [
  */
 export const splitTitle = (title: string): { base: string; volume: number } => {
     const trimmed = title.trim()
+
+    // Season/episode numbering is folded into one number so a work with
+    // several seasons stays a single series.
+    const seasonal = SEASON_EPISODE.exec(trimmed)
+    if (seasonal) {
+        const base = (seasonal[1] as string).replace(/[\s\-–—:,]+$/, '').trim()
+        if (base.length > 0) {
+            return { base, volume: Number(seasonal[2]) + Number(seasonal[3]) / 100 }
+        }
+    }
 
     for (const pattern of VOLUME_PATTERNS) {
         const match = pattern.exec(trimmed)
@@ -108,6 +138,28 @@ export const splitTitle = (title: string): { base: string; volume: number } => {
     }
 
     return { base: trimmed, volume: 1 }
+}
+
+/**
+ * Whether `title` belongs to the series `base`.
+ *
+ * A numbered instalment is matched on its stripped base. Some sequels carry no
+ * number at all and are set apart only by a subtitle, so a title also belongs
+ * when everything before its colon is exactly `base`. A compilation suffix is
+ * refused: an anthology or a complete collection is its own product, not the
+ * next instalment.
+ */
+export const belongsToSeries = (title: string, base: string): boolean => {
+    const wanted = base.trim().toLowerCase()
+    if (splitTitle(title).base.toLowerCase() === wanted) return true
+
+    const colon = title.indexOf(":")
+    if (colon < 0) return false
+
+    const prefix = title.slice(0, colon).trim().toLowerCase()
+    const suffix = title.slice(colon + 1).trim()
+
+    return prefix === wanted && suffix.length > 0 && !COMPILATION.test(suffix)
 }
 
 export const seriesIdFor = (title: string): string => `${SERIES_PREFIX}${splitTitle(title).base}`
@@ -144,6 +196,21 @@ export const groupIntoSeries = (cards: GalleryCard[], seen?: Set<string>): Parti
         }
     }
 
+    // Fold a sequel that is set apart only by a subtitle into the series it
+    // continues, when that series is on the page as well. belongsToSeries
+    // refuses compilations, so an anthology or complete collection is left as
+    // its own entry.
+    for (const [key, entry] of Array.from(series)) {
+        const colon = entry.base.indexOf(":")
+        if (colon < 0) continue
+
+        const parent = entry.base.slice(0, colon).trim().toLowerCase()
+        if (parent === key || !series.has(parent)) continue
+        if (!belongsToSeries(entry.base, parent)) continue
+
+        series.delete(key)
+    }
+
     const results: PartialSourceManga[] = []
     for (const [key, entry] of series) {
         if (seen != undefined) {
@@ -166,9 +233,8 @@ export const volumesOf = (cards: GalleryCard[], base: string): SeriesVolume[] =>
     const volumes: SeriesVolume[] = []
 
     for (const card of cards) {
-        const split = splitTitle(card.title)
-        if (split.base.toLowerCase() !== wanted) continue
-        volumes.push({ ...card, volume: split.volume })
+        if (!belongsToSeries(card.title, wanted)) continue
+        volumes.push({ ...card, volume: splitTitle(card.title).volume })
     }
 
     volumes.sort((a, b) => a.volume - b.volume)
@@ -392,9 +458,33 @@ export const chaptersFromVolumes = (
     volumes: SeriesVolume[],
     times?: Record<string, Date | undefined>
 ): Chapter[] => {
-    return volumes.map((entry, index) => App.createChapter({
+    // Sequels set apart only by a subtitle all carry volume 1, so they would
+    // collide on a single chapter number. Where a series is unnumbered
+    // throughout, its parts are ordered by upload date and numbered off in
+    // sequence instead. A series that carries real volume numbers is untouched.
+    const unnumbered = volumes.length > 1 && volumes.every((entry) => entry.volume === 1)
+
+    // With no numbers to go on, upload dates decide the order -- but the site
+    // leaves plenty of galleries undated, and an unknown date sorting as zero
+    // dragged the original instalment to the back. Dates are therefore only
+    // trusted when every part carries one. Failing that the untitled original
+    // leads and the subtitled instalments follow in reverse listing order, the
+    // listing running newest first.
+    const allDated = unnumbered && volumes.every((entry) => times?.[entry.id] != undefined)
+
+    let ordered = volumes
+    if (allDated) {
+        ordered = Array.from(volumes).sort((a, b) =>
+            (times?.[a.id]?.getTime() ?? 0) - (times?.[b.id]?.getTime() ?? 0))
+    } else if (unnumbered) {
+        const original = volumes.filter((entry) => !entry.title.includes(":"))
+        const sequels = volumes.filter((entry) => entry.title.includes(":")).reverse()
+        ordered = original.concat(sequels)
+    }
+
+    return ordered.map((entry, index) => App.createChapter({
         id: entry.id,
-        chapNum: entry.volume,
+        chapNum: unnumbered ? index + 1 : entry.volume,
         name: entry.title,
         time: times?.[entry.id],
         langCode: '🇬🇧',
