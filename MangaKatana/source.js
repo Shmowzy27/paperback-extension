@@ -14891,7 +14891,6 @@ var _Sources = (() => {
   var MK_PAGE_SIZE = 20;
   var MK_WANTED = [
     { id: 18, slug: "adult", label: "Adult" },
-    { id: 23, slug: "ecchi", label: "Ecchi" },
     { id: 34, slug: "erotica", label: "Erotica" },
     { id: 31, slug: "sexual-violence", label: "Sexual violence" }
   ];
@@ -15039,7 +15038,7 @@ var _Sources = (() => {
 
   // src/MangaKatana/MangaKatana.ts
   var MangaKatanaInfo = {
-    version: "1.0.0",
+    version: "1.1.0",
     name: "MangaKatana (18+)",
     icon: "icon.png",
     author: "Shmowzy27",
