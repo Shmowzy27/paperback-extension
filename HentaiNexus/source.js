@@ -14996,8 +14996,17 @@ var _Sources = (() => {
     new RegExp(`^(.*?\\S)\\s*#\\s*${VOLUME}${SUBTITLE}$`),
     new RegExp(`^(.*?\\S)\\s+${VOLUME}${SUBTITLE}$`)
   ];
+  var SEASON_EPISODE = new RegExp(`^(.*?\\S)\\s+season\\s*(\\d{1,2})\\s*(?:ep\\.?|episode)\\s*(\\d{1,3})${SUBTITLE}$`, "i");
+  var COMPILATION = new RegExp("\\b(anthology|side stor(?:y|ies)|complete collection|collection|omnibus|bundle|box set)\\b", "i");
   var splitTitle = (title) => {
     const trimmed = title.trim();
+    const seasonal = SEASON_EPISODE.exec(trimmed);
+    if (seasonal) {
+      const base = seasonal[1].replace(/[\s\-–—:,]+$/, "").trim();
+      if (base.length > 0) {
+        return { base, volume: Number(seasonal[2]) + Number(seasonal[3]) / 100 };
+      }
+    }
     for (const pattern of VOLUME_PATTERNS) {
       const match = pattern.exec(trimmed);
       if (!match) continue;
@@ -15005,6 +15014,15 @@ var _Sources = (() => {
       if (base.length > 0) return { base, volume: Number(match[2]) };
     }
     return { base: trimmed, volume: 1 };
+  };
+  var belongsToSeries = (title, base) => {
+    const wanted = base.trim().toLowerCase();
+    if (splitTitle(title).base.toLowerCase() === wanted) return true;
+    const colon = title.indexOf(":");
+    if (colon < 0) return false;
+    const prefix = title.slice(0, colon).trim().toLowerCase();
+    const suffix = title.slice(colon + 1).trim();
+    return prefix === wanted && suffix.length > 0 && !COMPILATION.test(suffix);
   };
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
@@ -15020,6 +15038,14 @@ var _Sources = (() => {
         existing.volume = volume;
         existing.card = card;
       }
+    }
+    for (const [key, entry] of Array.from(series)) {
+      const colon = entry.base.indexOf(":");
+      if (colon < 0) continue;
+      const parent2 = entry.base.slice(0, colon).trim().toLowerCase();
+      if (parent2 === key || !series.has(parent2)) continue;
+      if (!belongsToSeries(entry.base, parent2)) continue;
+      series.delete(key);
     }
     const results = [];
     for (const [key, entry] of series) {
@@ -15039,9 +15065,8 @@ var _Sources = (() => {
     const wanted = base.toLowerCase();
     const volumes = [];
     for (const card of cards) {
-      const split = splitTitle(card.title);
-      if (split.base.toLowerCase() !== wanted) continue;
-      volumes.push({ ...card, volume: split.volume });
+      if (!belongsToSeries(card.title, wanted)) continue;
+      volumes.push({ ...card, volume: splitTitle(card.title).volume });
     }
     volumes.sort((a, b) => a.volume - b.volume);
     return volumes;
@@ -15171,9 +15196,19 @@ ${description}`.trim() : description;
     return parsePublished(detailText($2, "Published"));
   };
   var chaptersFromVolumes = (volumes, times) => {
-    return volumes.map((entry, index2) => App.createChapter({
+    const unnumbered = volumes.length > 1 && volumes.every((entry) => entry.volume === 1);
+    const allDated = unnumbered && volumes.every((entry) => times?.[entry.id] != void 0);
+    let ordered = volumes;
+    if (allDated) {
+      ordered = Array.from(volumes).sort((a, b) => (times?.[a.id]?.getTime() ?? 0) - (times?.[b.id]?.getTime() ?? 0));
+    } else if (unnumbered) {
+      const original = volumes.filter((entry) => !entry.title.includes(":"));
+      const sequels = volumes.filter((entry) => entry.title.includes(":")).reverse();
+      ordered = original.concat(sequels);
+    }
+    return ordered.map((entry, index2) => App.createChapter({
       id: entry.id,
-      chapNum: entry.volume,
+      chapNum: unnumbered ? index2 + 1 : entry.volume,
       name: entry.title,
       time: times?.[entry.id],
       langCode: "\u{1F1EC}\u{1F1E7}",
@@ -15190,7 +15225,7 @@ ${description}`.trim() : description;
 
   // src/HentaiNexus/HentaiNexus.ts
   var HentaiNexusInfo = {
-    version: "1.7.0",
+    version: "1.8.0",
     name: "HentaiNexus",
     icon: "icon.png",
     author: "Shmowzy27",
