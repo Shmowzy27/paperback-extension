@@ -14988,6 +14988,11 @@ var _Sources = (() => {
     new RegExp(`^(.*?\\S)\\s+(?:ch\\.?|chapter)\\s*${VOLUME}${SUBTITLE}$`, "i"),
     new RegExp(`^(.*?\\S)\\s+(?:vol\\.?|volume)\\s*${VOLUME}${SUBTITLE}$`, "i"),
     new RegExp(`^(.*?\\S)\\s+(?:part|pt\\.?)\\s*${VOLUME}${SUBTITLE}$`, "i"),
+    // "... Season 3 ep.4: Subtitle". The episode keyword has to be
+    // recognised or nothing matches at all: the bare-number form needs
+    // whitespace before the digit and "ep.4" has a period there, so every
+    // episode became its own entry. Matching it groups a season together.
+    new RegExp(`^(.*?\\S)\\s+(?:ep\\.?|episode)\\s*${VOLUME}${SUBTITLE}$`, "i"),
     new RegExp(`^(.*?\\S)\\s*#\\s*${VOLUME}${SUBTITLE}$`),
     new RegExp(`^(.*?\\S)\\s+${VOLUME}${SUBTITLE}$`)
   ];
@@ -15185,7 +15190,7 @@ ${description}`.trim() : description;
 
   // src/HentaiNexus/HentaiNexus.ts
   var HentaiNexusInfo = {
-    version: "1.6.0",
+    version: "1.7.0",
     name: "HentaiNexus",
     icon: "icon.png",
     author: "Shmowzy27",
