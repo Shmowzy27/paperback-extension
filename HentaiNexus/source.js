@@ -15003,7 +15003,7 @@ var _Sources = (() => {
   };
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
-  var groupIntoSeries = (cards) => {
+  var groupIntoSeries = (cards, seen) => {
     const series = /* @__PURE__ */ new Map();
     for (const card of cards) {
       const { base, volume } = splitTitle(card.title);
@@ -15017,7 +15017,11 @@ var _Sources = (() => {
       }
     }
     const results = [];
-    for (const entry of series.values()) {
+    for (const [key, entry] of series) {
+      if (seen != void 0) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
       results.push(App.createPartialSourceManga({
         mangaId: `${SERIES_PREFIX}${entry.base}`,
         image: entry.card.thumbnailUrl,
@@ -15037,7 +15041,10 @@ var _Sources = (() => {
     volumes.sort((a, b) => a.volume - b.volume);
     return volumes;
   };
-  var seriesQuery = (base) => `title:"${base.replace(/"/g, "")}"`;
+  var seriesQuery = (base) => {
+    const phrase = base.replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    return `title:"${phrase.length > 0 ? phrase : base.replace(/"/g, "")}"`;
+  };
   var CATEGORIES = [
     { prefix: "tag", label: "Tags" },
     { prefix: "artist", label: "Artists" },
@@ -15178,7 +15185,7 @@ ${description}`.trim() : description;
 
   // src/HentaiNexus/HentaiNexus.ts
   var HentaiNexusInfo = {
-    version: "1.5.0",
+    version: "1.6.0",
     name: "HentaiNexus",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15312,6 +15319,7 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
     }
     async getSearchResults(query, metadata) {
       const page = metadata?.page ?? 1;
+      const seen = new Set(metadata?.seen ?? []);
       const terms = [];
       if (query.title) terms.push(query.title);
       for (const tag of query.includedTags ?? []) {
@@ -15321,10 +15329,11 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
         terms.push(toSearchTerm(tag.id, true));
       }
       const cards = parseCards(await this.loadPage(this.listingUrl(page, terms.join(" "))));
+      const results = groupIntoSeries(cards, seen);
       return App.createPagedResults({
-        results: groupIntoSeries(cards),
+        results,
         // Paging is judged on raw cards; grouping shrinks the visible count.
-        metadata: isLastPage(cards) ? void 0 : { page: page + 1 }
+        metadata: isLastPage(cards) ? void 0 : { page: page + 1, seen: Array.from(seen) }
       });
     }
     /** Lets the filter screen offer exclusions, not just inclusions. */
@@ -15385,10 +15394,12 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
         return App.createPagedResults({ results: [] });
       }
       const page = metadata?.page ?? 1;
+      const seen = new Set(metadata?.seen ?? []);
       const cards = parseCards(await this.loadPage(this.listingUrl(page)));
+      const results = groupIntoSeries(cards, seen);
       return App.createPagedResults({
-        results: groupIntoSeries(cards),
-        metadata: isLastPage(cards) ? void 0 : { page: page + 1 }
+        results,
+        metadata: isLastPage(cards) ? void 0 : { page: page + 1, seen: Array.from(seen) }
       });
     }
   };
