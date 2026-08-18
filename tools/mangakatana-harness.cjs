@@ -2,7 +2,7 @@
  * Runs the built MangaKatana (18+) bundle against the live site.
  *
  * The point of this source is the content rule: only titles carrying adult,
- * ecchi, erotica or sexual violence; never gender bender, yaoi or shounen-ai.
+ * erotica or sexual violence; never gender bender, yaoi or shounen-ai.
  * So beyond the usual listing/details/chapters/pages checks, every surface is
  * audited against that rule by fetching real genre data.
  */
@@ -52,7 +52,7 @@ const check = (label, ok, detail) => {
     if (!ok) failures++
 }
 
-const WANTED = ['adult', 'ecchi', 'erotica', 'sexual-violence']
+const WANTED = ['adult', 'erotica', 'sexual-violence']
 const BANNED = ['gender-bender', 'yaoi', 'shounen-ai']
 const genreSlugsOf = (details) => (details.mangaInfo.tags[0]?.tags ?? []).map((t) => t.id)
 const admitted = (slugs) => WANTED.some((g) => slugs.includes(g)) && !BANNED.some((g) => slugs.includes(g))
@@ -140,7 +140,7 @@ const admitted = (slugs) => WANTED.some((g) => slugs.includes(g)) && !BANNED.som
     // ---- tag browse ----
     const tags = await s.getSearchTags()
     check('18+ genres offered, exclusions shown',
-        tags[0]?.tags.length === 4 && tags[1]?.tags.length === 3,
+        tags[0]?.tags.length === 3 && tags[1]?.tags.length === 3,
         `${tags[0]?.tags.map((t) => t.id).join(',')} | ${tags[1]?.tags.map((t) => t.id).join(',')}`)
 
     const byGenre = await s.getSearchResults({ title: '', includedTags: [tags[0].tags[0]], excludedTags: [], parameters: {} }, undefined)

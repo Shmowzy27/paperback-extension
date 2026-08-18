@@ -40,14 +40,14 @@ import {
 
 /**
  * mangakatana.com, restricted to 18+ content by construction: every listing
- * runs through the site's own genre filter (any of adult, ecchi, erotica,
- * sexual violence; never gender bender, yaoi or shounen-ai), and every card is
+ * runs through the site's own genre filter (any of adult, erotica or sexual
+ * violence; never gender bender, yaoi or shounen-ai), and every card is
  * re-checked against the same rule client-side, so search cannot leak
  * unfiltered titles either. Format is deliberately not restricted -- manga,
  * manhwa, manhua and webtoon all qualify so long as the genres do.
  */
 export const MangaKatanaInfo: SourceInfo = {
-    version: '1.0.0',
+    version: '1.1.0',
     name: 'MangaKatana (18+)',
     icon: 'icon.png',
     author: 'Shmowzy27',

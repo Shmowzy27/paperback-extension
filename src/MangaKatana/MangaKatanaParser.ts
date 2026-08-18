@@ -17,9 +17,12 @@ export const MK_DOMAIN = 'https://mangakatana.com'
 export const MK_PAGE_SIZE = 20
 
 /**
- * This source is deliberately 18+ only: a title is admitted when it carries at
- * least one of these genres, whatever its format -- manga, manhwa, manhua or
- * webtoon alike.
+ * This source is deliberately explicit-18+ only: a title is admitted when it
+ * carries at least one of these genres, whatever its format -- manga, manhwa,
+ * manhua or webtoon alike. Ecchi is deliberately absent: by the site's own
+ * definition it is "the line between hentai and non-hentai" fanservice, and
+ * the user wants titles with actual explicit scenes, which on this site is
+ * what adult and erotica mark.
  *
  * The numeric ids mirror the site's own filter form and matter because listing
  * cards annotate their genres as ids (`data-genre=",19,23,..."`), which is what
@@ -27,7 +30,6 @@ export const MK_PAGE_SIZE = 20
  */
 export const MK_WANTED: { id: number; slug: string; label: string }[] = [
     { id: 18, slug: 'adult', label: 'Adult' },
-    { id: 23, slug: 'ecchi', label: 'Ecchi' },
     { id: 34, slug: 'erotica', label: 'Erotica' },
     { id: 31, slug: 'sexual-violence', label: 'Sexual violence' }
 ]
