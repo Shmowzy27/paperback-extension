@@ -109,6 +109,21 @@ const ARTIST = 'Mahiro Ootori'
         ids.some((id) => id === `${STRADDLING}: Complete Collection`),
         ids.filter((id) => id.startsWith(STRADDLING)).join(' | '))
 
+    // ---- season/episode grouping ----
+    // This artist numbers one work as "... Season N ep.M", which matched no
+    // volume pattern at all, so every episode stood as its own entry.
+    const seasons = ids.filter((id) => /^s:My Harem in Another World Season \d+$/.test(id))
+    check('season/episode volumes collapse into one entry per season', seasons.length === 2,
+        seasons.join(' | ') || 'none')
+
+    const strays = ids.filter((id) => /ep\.?\s*\d/i.test(id))
+    check('no bare episode is left as its own entry', strays.length === 0,
+        strays.join(' | ') || 'none left')
+
+    const s3 = await s.getChapters('s:My Harem in Another World Season 3')
+    check('a season lists its episodes as chapters', s3.length === 4,
+        `${s3.length} episodes: ${s3.map((c) => c.chapNum).join(',')}`)
+
     console.log(failures > 0 ? `\n${failures} check(s) failed` : '\nall checks passed')
     process.exit(failures > 0 ? 1 : 0)
 })().catch((e) => { console.error('FAILED:', e.message); process.exit(1) })
