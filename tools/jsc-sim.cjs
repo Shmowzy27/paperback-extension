@@ -71,9 +71,18 @@ for (const name of names) {
     const sources = context.Sources
     if (!sources) fail(`${name} evaluated but never defined Sources`)
 
-    // The bundle names its own export, which need not match the directory.
-    const exported = Object.keys(sources).filter((key) => typeof sources[key] === 'function')
-    if (exported.length === 0) fail(`${name} defined Sources but exported no class`)
+    // The bundle names its own export, which need not match the directory. A
+    // source file may also export plain helpers alongside its class, so only
+    // exports that actually carry the source methods on their prototype are
+    // treated as sources -- calling `new` on a helper throws and used to be
+    // reported as a broken bundle.
+    const exported = Object.keys(sources).filter((key) => {
+        const value = sources[key]
+        return typeof value === 'function'
+            && value.prototype != undefined
+            && REQUIRED_METHODS.every((method) => typeof value.prototype[method] === 'function')
+    })
+    if (exported.length === 0) fail(`${name} defined Sources but exported no class carrying the source methods`)
 
     for (const key of exported) {
         let instance

@@ -68,6 +68,76 @@ const SECTIONS: { id: string; label: string; sort: string }[] = [
     { id: 'popular', label: 'All-Time Popular (English)', sort: 'popular' }
 ]
 
+/**
+ * Galleries on nhentai are flat: a multi-volume work is published as several
+ * separate galleries, exactly the shape HentaiNexus faces. So volumes are
+ * merged into one library entry the same way -- the trailing volume number is
+ * stripped off the title and what remains is the series.
+ *
+ * The sister sites need none of this: hentaihere and hentai2read already model
+ * a series with several chapters natively.
+ */
+const VOLUME = '(\\d{1,3}(?:\\.\\d{1,2})?)'
+const SUBTITLE = '(?:\\s*[:\\-–—]\\s*.+)?'
+
+const VOLUME_PATTERNS: RegExp[] = [
+    new RegExp(`^(.*?\\S)\\s+(?:ch\\.?|chapter)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
+    new RegExp(`^(.*?\\S)\\s+(?:vol\\.?|volume)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
+    new RegExp(`^(.*?\\S)\\s+(?:part|pt\\.?)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
+    new RegExp(`^(.*?\\S)\\s*#\\s*${VOLUME}${SUBTITLE}$`),
+    new RegExp(`^(.*?\\S)\\s+${VOLUME}${SUBTITLE}$`),
+    // "WASANBON NAGI3" -- this site frequently glues the number straight onto
+    // the last word, which every whitespace-anchored pattern above misses.
+    new RegExp(`^(.*?[A-Za-z])(\\d{1,2})$`)
+]
+
+/**
+ * Titles arrive wrapped in circle, artist, language and scanlator brackets --
+ * "[Circle (Artist)] Real Title 2 (Parody) [Digital]". Those are stripped
+ * innermost-first and repeatedly, because a single pass leaves the outer
+ * bracket of a nested pair behind and the leftover "[Circle ]" poisons the
+ * series name.
+ */
+export const cleanTitle = (raw: string): string => {
+    let text = raw
+    let previous = ""
+    while (previous !== text) {
+        previous = text
+        text = text.replace(/[\[(（][^\[\]()（）]*[\])）]/g, '')
+    }
+    return text.replace(/\s+/g, ' ').trim().replace(/^[-~:\s]+|[-~:\s]+$/g, '')
+}
+
+export const splitTitle = (title: string): { base: string; volume: number } => {
+    const trimmed = cleanTitle(title)
+
+    for (const pattern of VOLUME_PATTERNS) {
+        const match = pattern.exec(trimmed)
+        if (!match) continue
+
+        const base = (match[1] as string).replace(/[\s\-–—:,]+$/, '').trim()
+        if (base.length > 0) return { base: base, volume: Number(match[2]) }
+    }
+
+    return { base: trimmed.length > 0 ? trimmed : title.trim(), volume: 1 }
+}
+
+const SERIES_PREFIX = 's:'
+export const seriesIdFor = (title: string): string => `${SERIES_PREFIX}${splitTitle(title).base}`
+export const isSeriesId = (mangaId: string): boolean => mangaId.startsWith(SERIES_PREFIX)
+export const baseFromSeriesId = (mangaId: string): string => mangaId.slice(SERIES_PREFIX.length)
+
+/**
+ * The phrase used to find a series' other volumes. Quotes are stripped and a
+ * leading minus neutralised: both are search operators here, and letting them
+ * through turns the lookup into a different query -- the same failure that once
+ * left HentaiNexus reporting "No volumes found" for any title holding one.
+ */
+export const seriesQuery = (base: string): string => {
+    const phrase = base.replace(/["]/g, ' ').replace(/(^|\s)-+/g, '$1').replace(/\s+/g, ' ').trim()
+    return phrase.length > 0 ? `"${phrase}"` : base
+}
+
 interface ApiListing {
     id: number
     english_title?: string
@@ -100,15 +170,18 @@ interface ListingMetadata {
 }
 
 /**
- * nhentai through its own v2 JSON API. One gallery is one manga carrying a
- * single chapter, the same shape HentaiNexus uses for standalone galleries.
+ * nhentai through its own v2 JSON API.
+ *
+ * Volumes published as separate galleries are merged into one library entry
+ * the way HentaiNexus does it, since this site models no series of its own.
+ * Each volume becomes a chapter of that entry.
  *
  * Excluded by construction: the standing BL/yaoi rule plus ugly bastard and
  * bald, negated inside every search query so the server filters, and every
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '1.0.0',
+    version: '1.1.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -149,8 +222,14 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         }
     })
 
+    /**
+     * A merged series has no page of its own on the site, so sharing one
+     * points at the search for its name; a plain gallery id links directly.
+     */
     getMangaShareUrl(mangaId: string): string {
-        return `${NH_DOMAIN}/g/${mangaId}/`
+        return isSeriesId(mangaId)
+            ? `${NH_DOMAIN}/search/?q=${encodeURIComponent(seriesQuery(baseFromSeriesId(mangaId)))}`
+            : `${NH_DOMAIN}/g/${mangaId}/`
     }
 
     async getCloudflareBypassRequestAsync(): Promise<Request> {
@@ -200,25 +279,76 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         return !(tagIds ?? []).some((id) => BANNED_IDS.has(id))
     }
 
+    /**
+     * Collapses the volumes on a page into one entry per series, the way
+     * HentaiNexus does: the lowest-numbered volume supplies the cover, and the
+     * series name is what the entry is called.
+     *
+     * `seen` carries the series already handed out by earlier pages, so a
+     * series straddling a page boundary is not emitted twice.
+     */
     private tilesFrom(entries: ApiListing[], seen: Set<string>): PartialSourceManga[] {
-        const tiles: PartialSourceManga[] = []
+        const series = new Map<string, { base: string; volume: number; thumb: string }>()
 
         for (const entry of entries) {
-            const id = String(entry.id)
-            if (seen.has(id) || !this.admitted(entry.tag_ids)) continue
+            if (!this.admitted(entry.tag_ids)) continue
 
-            const title = (entry.english_title ?? entry.japanese_title ?? `Gallery ${id}`).trim()
-            const thumb = (entry.thumbnail ?? '').replace(/^\/+/, '')
+            const raw = (entry.english_title ?? entry.japanese_title ?? `Gallery ${entry.id}`).trim()
+            const { base, volume } = splitTitle(raw)
+            const key = base.toLowerCase()
 
-            seen.add(id)
+            const existing = series.get(key)
+            if (existing == undefined) {
+                series.set(key, { base: base, volume: volume, thumb: (entry.thumbnail ?? '').replace(/^\/+/, '') })
+            } else if (volume < existing.volume) {
+                existing.volume = volume
+                existing.thumb = (entry.thumbnail ?? '').replace(/^\/+/, '')
+            }
+        }
+
+        const tiles: PartialSourceManga[] = []
+        for (const [key, entry] of series) {
+            const id = `s:${entry.base}`
+            if (seen.has(key)) continue
+            seen.add(key)
+
             tiles.push(App.createPartialSourceManga({
                 mangaId: id,
-                image: thumb.length > 0 ? `${NH_THUMB_CDN}/${thumb}` : '',
-                title: title
+                image: entry.thumb.length > 0 ? `${NH_THUMB_CDN}/${entry.thumb}` : '',
+                title: entry.base
             }))
         }
 
         return tiles
+    }
+
+    /**
+     * Every gallery belonging to `base`, ordered by volume. One search finds
+     * them; the query already negates the excluded tags, and each result is
+     * re-checked before it is accepted.
+     */
+    private async volumesOf(base: string): Promise<{ id: number; title: string; volume: number }[]> {
+        const data = await this.fetchJson<{ result?: ApiListing[] }>(
+            this.searchUrl(seriesQuery(base), 'date', 1)
+        )
+
+        const wanted = base.toLowerCase()
+        const volumes: { id: number; title: string; volume: number }[] = []
+        const seen = new Set<number>()
+
+        for (const entry of data.result ?? []) {
+            if (seen.has(entry.id) || !this.admitted(entry.tag_ids)) continue
+
+            const raw = (entry.english_title ?? entry.japanese_title ?? '').trim()
+            const split = splitTitle(raw)
+            if (split.base.toLowerCase() !== wanted) continue
+
+            seen.add(entry.id)
+            volumes.push({ id: entry.id, title: cleanTitle(raw) || raw, volume: split.volume })
+        }
+
+        volumes.sort((a, b) => a.volume - b.volume)
+        return volumes
     }
 
     private async pagedSearch(query: string, sort: string, page: number, seen: Set<string>): Promise<PagedResults> {
@@ -234,12 +364,32 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         })
     }
 
+    /**
+     * Resolves whichever gallery should speak for an entry: the first volume
+     * of a merged series, or the gallery itself for a plain numeric id (which
+     * is what a library entry from before merging, or a shared link, carries).
+     */
+    private async representativeId(mangaId: string): Promise<number> {
+        if (!isSeriesId(mangaId)) return Number(mangaId)
+
+        const base = baseFromSeriesId(mangaId)
+        const volumes = await this.volumesOf(base)
+        if (volumes.length === 0) {
+            throw new Error(`No volumes found for "${base}".`)
+        }
+        return (volumes[0] as { id: number }).id
+    }
+
     async getMangaDetails(mangaId: string): Promise<SourceManga> {
-        const gallery = await this.fetchJson<ApiGallery>(`${NH_API}/galleries/${mangaId}`)
+        const galleryId = await this.representativeId(mangaId)
+        const gallery = await this.fetchJson<ApiGallery>(`${NH_API}/galleries/${galleryId}`)
 
         const tags = gallery.tags ?? []
-        const title = (gallery.title?.pretty ?? gallery.title?.english ?? `Gallery ${mangaId}`).trim()
-        const fullTitle = (gallery.title?.english ?? title).trim()
+        // A merged entry is named for the series, not for whichever volume
+        // happened to supply the metadata.
+        const galleryTitle = (gallery.title?.pretty ?? gallery.title?.english ?? `Gallery ${mangaId}`).trim()
+        const title = isSeriesId(mangaId) ? baseFromSeriesId(mangaId) : galleryTitle
+        const fullTitle = (gallery.title?.english ?? galleryTitle).trim()
 
         const artists = tags.filter((tag) => tag.type === 'artist').map((tag) => tag.name)
 
@@ -280,30 +430,68 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
     }
 
     /**
-     * A gallery is a single chapter. Built directly from the gallery payload;
-     * upload_date is epoch seconds.
+     * Each volume of the series becomes a chapter, keyed on its gallery id.
+     *
+     * Upload dates live only on a gallery's own record, never in search
+     * results, so they cost one request per volume. That is affordable for the
+     * handful of volumes a series here runs to, but the API allows only
+     * fifteen requests a minute, so a runaway group is capped rather than
+     * making the app wait minutes -- the remaining chapters simply carry no
+     * date, which beats a wrong one.
      */
     async getChapters(mangaId: string): Promise<Chapter[]> {
-        const gallery = await this.fetchJson<ApiGallery>(`${NH_API}/galleries/${mangaId}`)
+        if (!isSeriesId(mangaId)) {
+            const gallery = await this.fetchJson<ApiGallery>(`${NH_API}/galleries/${mangaId}`)
+            if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
+                throw new Error('This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.')
+            }
 
-        if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
-            throw new Error('This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.')
+            return [App.createChapter({
+                id: String(gallery.id),
+                chapNum: 1,
+                name: (gallery.title?.pretty ?? gallery.title?.english ?? 'Gallery').trim(),
+                time: gallery.upload_date != undefined ? new Date(gallery.upload_date * 1000) : undefined,
+                langCode: '🇬🇧',
+                sortingIndex: 0
+            })]
         }
 
-        const uploaded = gallery.upload_date != undefined ? new Date(gallery.upload_date * 1000) : undefined
+        const base = baseFromSeriesId(mangaId)
+        const volumes = await this.volumesOf(base)
+        if (volumes.length === 0) {
+            throw new Error(`No volumes found for "${base}".`)
+        }
 
-        return [App.createChapter({
-            id: 'gallery',
-            chapNum: 1,
-            name: (gallery.title?.pretty ?? gallery.title?.english ?? 'Gallery').trim(),
-            time: uploaded,
+        const DATE_BUDGET = 8
+        const times: Record<number, Date | undefined> = {}
+        for (const volume of volumes.slice(0, DATE_BUDGET)) {
+            try {
+                const gallery = await this.fetchJson<ApiGallery>(`${NH_API}/galleries/${volume.id}`)
+                times[volume.id] = gallery.upload_date != undefined ? new Date(gallery.upload_date * 1000) : undefined
+            } catch {
+                // A volume whose record will not load keeps its place in the
+                // list without a date.
+            }
+        }
+
+        return volumes.map((volume, index) => App.createChapter({
+            id: String(volume.id),
+            chapNum: volume.volume,
+            name: volume.title,
+            time: times[volume.id],
             langCode: '🇬🇧',
-            sortingIndex: 0
-        })]
+            sortingIndex: index
+        }))
     }
 
+    /**
+     * The chapter id is the gallery to read. `gallery` is accepted as well,
+     * the id the source handed out before volumes were merged, so an entry
+     * already in the library keeps working.
+     */
     async getChapterDetails(mangaId: string, chapterId: string): Promise<ChapterDetails> {
-        const gallery = await this.fetchJson<ApiGallery>(`${NH_API}/galleries/${mangaId}`)
+        const galleryId = /^\d+$/.test(chapterId) ? chapterId : String(await this.representativeId(mangaId))
+        const gallery = await this.fetchJson<ApiGallery>(`${NH_API}/galleries/${galleryId}`)
 
         const pages: string[] = []
         for (const page of gallery.pages ?? []) {
@@ -312,7 +500,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         }
 
         if (pages.length === 0) {
-            throw new Error(`No pages were returned for gallery ${mangaId}.`)
+            throw new Error(`No pages were returned for gallery ${galleryId}.`)
         }
 
         return App.createChapterDetails({
