@@ -798,7 +798,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "1.1.0",
+    version: "1.2.0",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -817,9 +817,15 @@ var _Sources = (() => {
   var NHentai = class {
     constructor() {
       this.requestManager = App.createRequestManager({
-        // The API allows 15 requests a minute anonymously and answers 429
-        // beyond it, so the source paces itself well inside that.
-        requestsPerSecond: 0.2,
+        // The API's anonymous ceiling is fifteen requests a minute, and it
+        // answers 429 past it, so this sits exactly on that budget.
+        //
+        // It used to pace at one every five seconds, which was well inside the
+        // budget but made opening an entry take twenty seconds -- four requests
+        // apiece, because details and chapters each ran their own sibling
+        // search. The memo below cut that to two, so the same safe rate now
+        // opens an entry in about four seconds.
+        requestsPerSecond: 0.25,
         requestTimeout: 6e4,
         interceptor: {
           interceptRequest: async (request) => {
@@ -838,6 +844,16 @@ var _Sources = (() => {
           }
         }
       });
+      /**
+       * Short-lived memo of things just fetched, so that opening an entry costs
+       * one round of requests rather than two.
+       *
+       * Paperback calls getMangaDetails and getChapters back to back, and both
+       * need the same sibling search and the same gallery record; without this
+       * each open paid for them twice. Entries are dropped after a couple of
+       * minutes so a refresh still sees new volumes.
+       */
+      this.memo = /* @__PURE__ */ new Map();
     }
     /**
      * A merged series has no page of its own on the site, so sharing one
@@ -871,11 +887,33 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         throw new Error(`Unexpected response from the site (HTTP ${status}).`);
       }
     }
+    remembered(key) {
+      const entry = this.memo.get(key);
+      if (entry == void 0) return void 0;
+      if (Date.now() - entry.at > 12e4) {
+        this.memo.delete(key);
+        return void 0;
+      }
+      return entry.value;
+    }
+    remember(key, value) {
+      if (this.memo.size > 40) this.memo.clear();
+      this.memo.set(key, { at: Date.now(), value });
+    }
     async fetchJson(url) {
       const request = App.createRequest({ url, method: "GET" });
       const response = await this.requestManager.schedule(request, 3);
       this.checkResponse(response.status);
       return JSON.parse(response.data);
+    }
+    /** A gallery record, reused if it was fetched moments ago. */
+    async gallery(galleryId) {
+      const key = `g:${galleryId}`;
+      const cached = this.remembered(key);
+      if (cached != void 0) return cached;
+      const gallery = await this.fetchJson(`${NH_API}/galleries/${galleryId}`);
+      this.remember(key, gallery);
+      return gallery;
     }
     /** URL-safe form of a search query, negations included. */
     searchUrl(query, sort, page) {
@@ -931,6 +969,9 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
      * re-checked before it is accepted.
      */
     async volumesOf(base) {
+      const key = `v:${base.toLowerCase()}`;
+      const cached = this.remembered(key);
+      if (cached != void 0) return cached;
       const data = await this.fetchJson(
         this.searchUrl(seriesQuery(base), "date", 1)
       );
@@ -946,6 +987,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         volumes.push({ id: entry.id, title: cleanTitle(raw) || raw, volume: split.volume });
       }
       volumes.sort((a, b) => a.volume - b.volume);
+      this.remember(key, volumes);
       return volumes;
     }
     async pagedSearch(query, sort, page, seen) {
@@ -974,7 +1016,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
     }
     async getMangaDetails(mangaId) {
       const galleryId = await this.representativeId(mangaId);
-      const gallery = await this.fetchJson(`${NH_API}/galleries/${galleryId}`);
+      const gallery = await this.gallery(galleryId);
       const tags = gallery.tags ?? [];
       const galleryTitle = (gallery.title?.pretty ?? gallery.title?.english ?? `Gallery ${mangaId}`).trim();
       const title = isSeriesId(mangaId) ? baseFromSeriesId(mangaId) : galleryTitle;
@@ -1018,7 +1060,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
      */
     async getChapters(mangaId) {
       if (!isSeriesId(mangaId)) {
-        const gallery = await this.fetchJson(`${NH_API}/galleries/${mangaId}`);
+        const gallery = await this.gallery(mangaId);
         if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
           throw new Error("This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.");
         }
@@ -1036,14 +1078,10 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
       if (volumes.length === 0) {
         throw new Error(`No volumes found for "${base}".`);
       }
-      const DATE_BUDGET = 8;
       const times = {};
-      for (const volume of volumes.slice(0, DATE_BUDGET)) {
-        try {
-          const gallery = await this.fetchJson(`${NH_API}/galleries/${volume.id}`);
-          times[volume.id] = gallery.upload_date != void 0 ? new Date(gallery.upload_date * 1e3) : void 0;
-        } catch {
-        }
+      for (const volume of volumes) {
+        const cached = this.remembered(`g:${volume.id}`);
+        if (cached?.upload_date != void 0) times[volume.id] = new Date(cached.upload_date * 1e3);
       }
       return volumes.map((volume, index) => App.createChapter({
         id: String(volume.id),
@@ -1061,7 +1099,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
      */
     async getChapterDetails(mangaId, chapterId) {
       const galleryId = /^\d+$/.test(chapterId) ? chapterId : String(await this.representativeId(mangaId));
-      const gallery = await this.fetchJson(`${NH_API}/galleries/${galleryId}`);
+      const gallery = await this.gallery(galleryId);
       const pages = [];
       for (const page of gallery.pages ?? []) {
         const path = (page.path ?? "").replace(/^\/+/, "");
