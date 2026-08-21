@@ -785,9 +785,9 @@ var _Sources = (() => {
       const match = pattern.exec(trimmed);
       if (!match) continue;
       const base = match[1].replace(/[\s\-–—:,]+$/, "").trim();
-      if (base.length > 0) return { base, volume: Number(match[2]) };
+      if (base.length > 0) return { base, volume: Number(match[2]), marked: true };
     }
-    return { base: trimmed.length > 0 ? trimmed : title.trim(), volume: 1 };
+    return { base: trimmed.length > 0 ? trimmed : title.trim(), volume: 1, marked: false };
   };
   var SERIES_PREFIX = "s:";
   var seriesIdFor = (title) => `${SERIES_PREFIX}${splitTitle(title).base}`;
@@ -798,7 +798,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "1.2.0",
+    version: "1.3.0",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -817,15 +817,17 @@ var _Sources = (() => {
   var NHentai = class {
     constructor() {
       this.requestManager = App.createRequestManager({
-        // The API's anonymous ceiling is fifteen requests a minute, and it
-        // answers 429 past it, so this sits exactly on that budget.
+        // The documented anonymous ceiling is fifteen requests a minute, but
+        // measuring it says otherwise: at exactly that rate the API starts
+        // answering 429 (retry-after: 60) from the eleventh request onward, so
+        // the real allowance is nearer ten a rolling minute. Pacing sat on the
+        // documented figure and tripped the true one, which took out whole
+        // Discover pages, since one 429 fails the section outright.
         //
-        // It used to pace at one every five seconds, which was well inside the
-        // budget but made opening an entry take twenty seconds -- four requests
-        // apiece, because details and chapters each ran their own sibling
-        // search. The memo below cut that to two, so the same safe rate now
-        // opens an entry in about four seconds.
-        requestsPerSecond: 0.25,
+        // Seven seconds is a little over eight a minute, leaving headroom. The
+        // rate alone was never going to be enough, though -- what makes this
+        // workable is that an unnumbered gallery now opens on one request.
+        requestsPerSecond: 0.14,
         requestTimeout: 6e4,
         interceptor: {
           interceptRequest: async (request) => {
@@ -878,7 +880,7 @@ var _Sources = (() => {
 Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
       }
       if (status === 429) {
-        throw new Error("nhentai is rate limiting (HTTP 429). Wait a minute and try again.");
+        throw new Error("nhentai is rate limiting this connection (HTTP 429). It allows about ten requests a minute and clears after sixty seconds -- wait a minute, then pull to refresh.");
       }
       if (status >= 500) {
         throw new Error(`The site returned an error (HTTP ${status}). It is probably down or overloaded -- try again shortly.`);
@@ -940,25 +942,27 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
       for (const entry of entries) {
         if (!this.admitted(entry.tag_ids)) continue;
         const raw = (entry.english_title ?? entry.japanese_title ?? `Gallery ${entry.id}`).trim();
-        const { base, volume } = splitTitle(raw);
-        const key = base.toLowerCase();
+        const { base, volume, marked } = splitTitle(raw);
+        const thumb = (entry.thumbnail ?? "").replace(/^\/+/, "");
+        const key = marked ? `s:${base.toLowerCase()}` : `g:${entry.id}`;
+        const id = marked ? `s:${base}` : String(entry.id);
+        const title = marked ? base : cleanTitle(raw) || raw;
         const existing = series.get(key);
         if (existing == void 0) {
-          series.set(key, { base, volume, thumb: (entry.thumbnail ?? "").replace(/^\/+/, "") });
+          series.set(key, { id, title, volume, thumb });
         } else if (volume < existing.volume) {
           existing.volume = volume;
-          existing.thumb = (entry.thumbnail ?? "").replace(/^\/+/, "");
+          existing.thumb = thumb;
         }
       }
       const tiles = [];
       for (const [key, entry] of series) {
-        const id = `s:${entry.base}`;
         if (seen.has(key)) continue;
         seen.add(key);
         tiles.push(App.createPartialSourceManga({
-          mangaId: id,
+          mangaId: entry.id,
           image: entry.thumb.length > 0 ? `${NH_THUMB_CDN}/${entry.thumb}` : "",
-          title: entry.base
+          title: entry.title
         }));
       }
       return tiles;
