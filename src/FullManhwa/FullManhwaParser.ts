@@ -41,6 +41,17 @@ export const SM_ORIGINS: { id: string; label: string }[] = [
     { id: 'adult', label: 'Adult' }
 ]
 
+/**
+ * The site's own "Customize" preference, pinned to hide the BL category --
+ * excluded by request: no BL or yaoi content. The preference is an ordinary
+ * self-contained cookie (no session needed), scoped per surface: `series`
+ * covers the catalog, search and the completed/uncensored listings, `latest`
+ * covers the latest feed. With it the SERVER drops BL rows, so pages arrive
+ * full and pagination stays clean; the badge check in parseTiles remains as
+ * the backstop for any surface the preference does not reach.
+ */
+export const SM_HIDDEN_COOKIE = 'say_catalog_hidden_series=%5B%22bl%22%5D; say_catalog_hidden_latest=%5B%22bl%22%5D'
+
 /** Genre ids are namespaced so routeFor can tell them from sections/origins. */
 export const SM_GENRE_PREFIX = 'genre:'
 
@@ -105,6 +116,13 @@ export const parseTiles = ($: CheerioAPI): TileRow[] => {
     for (const element of elements) {
         const card = $(element)
 
+        // BL is a category of its own on the site (Category: BL, listed under
+        // /en/bl) and its releases flood the latest feed -- ten of twenty-four
+        // cards at the time of writing. The card badges it, so it is dropped
+        // here, which covers every listing and search alike. Excluded by
+        // request: no BL or yaoi content.
+        if (card.find('.series-type-badge').first().text().trim().toUpperCase() === 'BL') continue
+
         const href = card.find('a[href*="/series/"]').first().attr('href') ?? ''
         const slug = /\/series\/([^/?#]+)\/?$/.exec(href)?.[1]
         if (slug == undefined || seen.has(slug)) continue
@@ -123,8 +141,18 @@ export const parseTiles = ($: CheerioAPI): TileRow[] => {
     return rows
 }
 
-export const isLastPage = (rows: TileRow[]): boolean => {
-    return rows.length < SM_PAGE_SIZE
+/**
+ * Raw card count, before the BL rule drops any. Pagination must be judged on
+ * this: a page can be full while most of its cards are filtered out, and
+ * treating the shrunken result as a short page would end paging early.
+ */
+export const countCards = ($: CheerioAPI): number => {
+    const grid = $('section.series-catalog-grid article.series-card').length
+    return grid > 0 ? grid : $('article.series-card').length
+}
+
+export const isLastPage = ($: CheerioAPI): boolean => {
+    return countCards($) < SM_PAGE_SIZE
 }
 
 /**

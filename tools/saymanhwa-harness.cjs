@@ -207,6 +207,36 @@ const note = (label, detail) => console.log(`note  ${label}${detail ? ` — ${de
         }
     }
 
+    // ---- BL exclusion ----
+    // The site grew a BL category whose releases flood the latest feed; cards
+    // badge it, and the source must drop every one. Ground truth is read off
+    // the raw pages here, not hardcoded, so the check tracks the site.
+    const rawFetch = async (url) => (await fetch(url, { headers: { 'user-agent': UA } })).text()
+    const cardsOf = (html) => [...html.matchAll(/<article class="series-card">([\s\S]*?)<\/article>/g)]
+        .map((m) => ({
+            slug: /href="\/en\/series\/([a-z0-9-]+)"/.exec(m[1])?.[1],
+            bl: /series-type-badge">\s*BL\s*</i.test(m[1])
+        }))
+        .filter((c) => c.slug)
+
+    const rawSearch = cardsOf(await rawFetch('https://saymanhwa.com/en/series?q=alpha'))
+    const blSlugs = rawSearch.filter((c) => c.bl).map((c) => c.slug)
+    const keepSlugs = rawSearch.filter((c) => !c.bl).map((c) => c.slug)
+
+    const alpha = await s.getSearchResults({ title: 'alpha', includedTags: [], excludedTags: [], parameters: {} }, undefined)
+    const alphaIds = alpha.results.map((r) => r.mangaId)
+    check('BL titles never survive search', blSlugs.length > 0 && !alphaIds.some((id) => blSlugs.includes(id)),
+        `raw page had ${blSlugs.length} BL of ${rawSearch.length}; source returned ${alphaIds.length}`)
+    check('non-BL titles still come through search', keepSlugs.every((slug) => alphaIds.includes(slug)),
+        alphaIds.join(', ').slice(0, 80) || 'none')
+
+    const rawLatest = cardsOf(await rawFetch('https://saymanhwa.com/en/latest'))
+    const latestBl = rawLatest.filter((c) => c.bl).map((c) => c.slug)
+    const latestBatch = await s.getViewMoreItems('latest', undefined)
+    check('BL titles never appear in the latest listing',
+        latestBatch.results.length > 0 && !latestBatch.results.some((r) => latestBl.includes(r.mangaId)),
+        `raw latest carried ${latestBl.length} BL cards; source batch of ${latestBatch.results.length} has none`)
+
     console.log(failures > 0 ? `\n${failures} check(s) failed` : '\nall checks passed')
     process.exit(failures > 0 ? 1 : 0)
 })().catch((e) => { console.error('FAILED:', e.message); process.exit(1) })

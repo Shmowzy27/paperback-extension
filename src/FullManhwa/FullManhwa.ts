@@ -32,6 +32,7 @@ import {
     parseTiles,
     routeFor,
     SM_BASE,
+    SM_HIDDEN_COOKIE,
     SM_DOMAIN,
     SM_ORIGINS,
     SM_SECTIONS,
@@ -46,7 +47,7 @@ import {
  * resolve, so the existing library keeps working.
  */
 export const FullManhwaInfo: SourceInfo = {
-    version: '2.1.0',
+    version: '2.2.0',
     name: 'SayManhwa',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -94,12 +95,13 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
 
                 // Carry any session the user established in the WebView, so
                 // account-locked chapters are visible. Merged with, rather than
-                // replacing, cookies a caller already set.
-                const stored = this.storedCookies()
-                if (stored.length > 0) {
-                    const existing = (request.headers['cookie'] ?? '').trim()
-                    request.headers['cookie'] = existing.length > 0 ? `${stored}; ${existing}` : stored
-                }
+                // replacing, cookies a caller already set. The hide-BL
+                // preference cookie leads so the server filters every listing.
+                const stored = [SM_HIDDEN_COOKIE, this.storedCookies()]
+                    .filter((part) => part.length > 0)
+                    .join('; ')
+                const existing = (request.headers['cookie'] ?? '').trim()
+                request.headers['cookie'] = existing.length > 0 ? `${stored}; ${existing}` : stored
 
                 return request
             },
@@ -206,15 +208,45 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
      * stops on a short page, and also when a full page contributed nothing new,
      * which is what a reordered listing looks like from here.
      */
-    private async pagedListing(url: string, page: number, seen: Set<string>): Promise<PagedResults> {
-        const rows = parseTiles(await this.loadPage(url))
-        const tiles = this.tilesFrom(rows, seen)
+    /**
+     * Walks a listing from `page` until something qualifies or it ends,
+     * returning plain data -- results are never read back off a created
+     * PagedResults, which round-trips off-device and fails on the phone.
+     *
+     * The walk exists because the BL rule can empty a page the site itself
+     * filled -- the latest feed has run ten BL cards of twenty-four and the
+     * completed listing a full page -- and handing the app an empty batch
+     * risks stalling its scroll.
+     */
+    private async walkListing(urlFor: (page: number) => string, page: number, seen: Set<string>): Promise<{ tiles: PartialSourceManga[]; nextPage?: number }> {
+        const tiles: PartialSourceManga[] = []
+        let current = page
 
-        const exhausted = isLastPage(rows) || tiles.length === 0
+        for (let hop = 0; hop < 4; hop++) {
+            const $ = await this.loadPage(urlFor(current))
+            const rows = parseTiles($)
+            tiles.push(...this.tilesFrom(rows, seen))
+
+            if (isLastPage($)) return { tiles }
+            // A full page whose survivors were all already handed out is the
+            // reordering-listing signature; stopping there is what keeps an
+            // infinite scroll from looping. An all-BL page (no survivors at
+            // all) is not that -- the walk continues past it.
+            if (rows.length > 0 && tiles.length === 0) return { tiles }
+
+            current++
+            if (tiles.length > 0) break
+        }
+
+        return { tiles, nextPage: current }
+    }
+
+    private async pagedListing(urlFor: (page: number) => string, page: number, seen: Set<string>): Promise<PagedResults> {
+        const walk = await this.walkListing(urlFor, page, seen)
 
         return App.createPagedResults({
-            results: tiles,
-            metadata: exhausted ? undefined : { page: page + 1, seen: Array.from(seen) }
+            results: walk.tiles,
+            metadata: walk.nextPage == undefined ? undefined : { page: walk.nextPage, seen: Array.from(seen) }
         })
     }
 
@@ -254,11 +286,11 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
 
         // A title goes through the catalog's own `q`; a bare tag selection
         // browses that listing instead.
-        const url = title.length > 0
-            ? `${SM_BASE}/series?q=${encodeURIComponent(title)}&page=${page}`
-            : this.listingUrl(selected ?? 'latest', page)
+        const urlFor = title.length > 0
+            ? (p: number) => `${SM_BASE}/series?q=${encodeURIComponent(title)}&page=${p}`
+            : (p: number) => this.listingUrl(selected ?? 'latest', p)
 
-        return this.pagedListing(url, page, seen)
+        return this.pagedListing(urlFor, page, seen)
     }
 
     /** The site offers no way to exclude a genre, so exclusion is not claimed. */
@@ -313,8 +345,8 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
                 items: []
             })
 
-            const rows = parseTiles(await this.loadPage(this.listingUrl(entry.id, 1)))
-            section.items = this.tilesFrom(rows, new Set<string>())
+            const walk = await this.walkListing((p) => this.listingUrl(entry.id, p), 1, new Set<string>())
+            section.items = walk.tiles
             sectionCallback(section)
         }
     }
@@ -323,6 +355,6 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
         const page = metadata?.page ?? 1
         const seen = new Set(metadata?.seen ?? [])
 
-        return this.pagedListing(this.listingUrl(homepageSectionId, page), page, seen)
+        return this.pagedListing((p) => this.listingUrl(homepageSectionId, p), page, seen)
     }
 }
