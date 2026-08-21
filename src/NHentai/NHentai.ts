@@ -40,7 +40,9 @@ export const NH_BANNED: { id: number; name: string }[] = [
     { id: 23895, name: 'yaoi' },
     { id: 21712, name: 'males only' },
     { id: 162979, name: 'ugly bastard' },
-    { id: 73750, name: 'bald' }
+    { id: 73750, name: 'bald' },
+    { id: 29023, name: 'tomgirl' },
+    { id: 15782, name: 'crossdressing' }
 ]
 
 const BANNED_IDS = new Set(NH_BANNED.map((tag) => tag.id))
@@ -219,7 +221,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '1.6.0',
+    version: '1.7.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',

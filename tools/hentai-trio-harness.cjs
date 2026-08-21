@@ -140,8 +140,8 @@ const expectGateThrow = async (label, fn) => {
         check('details parse', d.mangaInfo.titles[0]?.length > 0 && d.mangaInfo.image.startsWith('https://') && tagLabels.length > 0,
             `"${d.mangaInfo.titles[0]?.slice(0, 50)}" tags=${tagLabels.length}`)
         check('sampled title carries no banned tag',
-            !tagLabels.some((label) => /^(yaoi|males only|ugly bastard|bald)$/i.test(label)),
-            tagLabels.filter((l) => /yaoi|males only|ugly bastard|bald/i.test(l)).join(',') || 'clean')
+            !tagLabels.some((label) => /^(yaoi|males only|ugly bastard|bald|tomgirl|crossdressing)$/i.test(label)),
+            tagLabels.filter((l) => /yaoi|males only|ugly bastard|bald|tomgirl|crossdress/i.test(l)).join(',') || 'clean')
 
         // Written before volumes were merged, this used to demand exactly one
         // chapter; a listing entry is now a series and may legitimately carry
@@ -234,7 +234,7 @@ const expectGateThrow = async (label, fn) => {
                 && tags[tags.length - 1]?.id === 'excluded',
             tags.map((sec) => `${sec.id}:${sec.tags.length}`).join(' '))
         check('banned tags are scrubbed from the offered catalogs',
-            !offered.some((label) => ['yaoi', 'males only', 'ugly bastard', 'bald'].includes(label)),
+            !offered.some((label) => ['yaoi', 'males only', 'ugly bastard', 'bald', 'tomgirl', 'crossdressing'].includes(label)),
             `${offered.length} tags offered, none banned`)
 
         const browsable = catalogs[0]?.tags[0]

@@ -36,7 +36,7 @@ const H2R_CDN = 'https://hentaicdn.com/hentai'
  * enforcement is the details gate plus scrubbing of everything the source
  * itself offers (see the class comment).
  */
-const BANNED_LABELS = /yaoi|boy.?love|shounen[ -]?ai|males only|ugly bastard|\bbald\b|\bfat\b/i
+const BANNED_LABELS = /yaoi|boy.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b/i
 const BANNED_CATEGORY_SLUGS = new Set(['Yaoi'])
 
 /**
@@ -83,7 +83,7 @@ interface ListingMetadata {
  * read or land in the library.
  */
 export const Hentai2ReadInfo: SourceInfo = {
-    version: '1.0.0',
+    version: '1.1.0',
     name: 'Hentai2Read (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
