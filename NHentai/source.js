@@ -727,7 +727,13 @@ var _Sources = (() => {
     NH_BANNED: () => NH_BANNED,
     NH_DOMAIN: () => NH_DOMAIN,
     NHentai: () => NHentai,
-    NHentaiInfo: () => NHentaiInfo
+    NHentaiInfo: () => NHentaiInfo,
+    baseFromSeriesId: () => baseFromSeriesId,
+    cleanTitle: () => cleanTitle,
+    isSeriesId: () => isSeriesId,
+    seriesIdFor: () => seriesIdFor,
+    seriesQuery: () => seriesQuery,
+    splitTitle: () => splitTitle
   });
   var import_types = __toESM(require_lib());
   var NH_DOMAIN = "https://nhentai.net";
@@ -752,8 +758,47 @@ var _Sources = (() => {
     { id: "popular-week", label: "Popular This Week (English)", sort: "popular-week" },
     { id: "popular", label: "All-Time Popular (English)", sort: "popular" }
   ];
+  var VOLUME = "(\\d{1,3}(?:\\.\\d{1,2})?)";
+  var SUBTITLE = "(?:\\s*[:\\-\u2013\u2014]\\s*.+)?";
+  var VOLUME_PATTERNS = [
+    new RegExp(`^(.*?\\S)\\s+(?:ch\\.?|chapter)\\s*${VOLUME}${SUBTITLE}$`, "i"),
+    new RegExp(`^(.*?\\S)\\s+(?:vol\\.?|volume)\\s*${VOLUME}${SUBTITLE}$`, "i"),
+    new RegExp(`^(.*?\\S)\\s+(?:part|pt\\.?)\\s*${VOLUME}${SUBTITLE}$`, "i"),
+    new RegExp(`^(.*?\\S)\\s*#\\s*${VOLUME}${SUBTITLE}$`),
+    new RegExp(`^(.*?\\S)\\s+${VOLUME}${SUBTITLE}$`),
+    // "WASANBON NAGI3" -- this site frequently glues the number straight onto
+    // the last word, which every whitespace-anchored pattern above misses.
+    new RegExp(`^(.*?[A-Za-z])(\\d{1,2})$`)
+  ];
+  var cleanTitle = (raw) => {
+    let text = raw;
+    let previous = "";
+    while (previous !== text) {
+      previous = text;
+      text = text.replace(/[\[(（][^\[\]()（）]*[\])）]/g, "");
+    }
+    return text.replace(/\s+/g, " ").trim().replace(/^[-~:\s]+|[-~:\s]+$/g, "");
+  };
+  var splitTitle = (title) => {
+    const trimmed = cleanTitle(title);
+    for (const pattern of VOLUME_PATTERNS) {
+      const match = pattern.exec(trimmed);
+      if (!match) continue;
+      const base = match[1].replace(/[\s\-–—:,]+$/, "").trim();
+      if (base.length > 0) return { base, volume: Number(match[2]) };
+    }
+    return { base: trimmed.length > 0 ? trimmed : title.trim(), volume: 1 };
+  };
+  var SERIES_PREFIX = "s:";
+  var seriesIdFor = (title) => `${SERIES_PREFIX}${splitTitle(title).base}`;
+  var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
+  var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
+  var seriesQuery = (base) => {
+    const phrase = base.replace(/["]/g, " ").replace(/(^|\s)-+/g, "$1").replace(/\s+/g, " ").trim();
+    return phrase.length > 0 ? `"${phrase}"` : base;
+  };
   var NHentaiInfo = {
-    version: "1.0.0",
+    version: "1.1.0",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -794,8 +839,12 @@ var _Sources = (() => {
         }
       });
     }
+    /**
+     * A merged series has no page of its own on the site, so sharing one
+     * points at the search for its name; a plain gallery id links directly.
+     */
     getMangaShareUrl(mangaId) {
-      return `${NH_DOMAIN}/g/${mangaId}/`;
+      return isSeriesId(mangaId) ? `${NH_DOMAIN}/search/?q=${encodeURIComponent(seriesQuery(baseFromSeriesId(mangaId)))}` : `${NH_DOMAIN}/g/${mangaId}/`;
     }
     async getCloudflareBypassRequestAsync() {
       return App.createRequest({
@@ -840,21 +889,64 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
     admitted(tagIds) {
       return !(tagIds ?? []).some((id) => BANNED_IDS.has(id));
     }
+    /**
+     * Collapses the volumes on a page into one entry per series, the way
+     * HentaiNexus does: the lowest-numbered volume supplies the cover, and the
+     * series name is what the entry is called.
+     *
+     * `seen` carries the series already handed out by earlier pages, so a
+     * series straddling a page boundary is not emitted twice.
+     */
     tilesFrom(entries, seen) {
-      const tiles = [];
+      const series = /* @__PURE__ */ new Map();
       for (const entry of entries) {
-        const id = String(entry.id);
-        if (seen.has(id) || !this.admitted(entry.tag_ids)) continue;
-        const title = (entry.english_title ?? entry.japanese_title ?? `Gallery ${id}`).trim();
-        const thumb = (entry.thumbnail ?? "").replace(/^\/+/, "");
-        seen.add(id);
+        if (!this.admitted(entry.tag_ids)) continue;
+        const raw = (entry.english_title ?? entry.japanese_title ?? `Gallery ${entry.id}`).trim();
+        const { base, volume } = splitTitle(raw);
+        const key = base.toLowerCase();
+        const existing = series.get(key);
+        if (existing == void 0) {
+          series.set(key, { base, volume, thumb: (entry.thumbnail ?? "").replace(/^\/+/, "") });
+        } else if (volume < existing.volume) {
+          existing.volume = volume;
+          existing.thumb = (entry.thumbnail ?? "").replace(/^\/+/, "");
+        }
+      }
+      const tiles = [];
+      for (const [key, entry] of series) {
+        const id = `s:${entry.base}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
         tiles.push(App.createPartialSourceManga({
           mangaId: id,
-          image: thumb.length > 0 ? `${NH_THUMB_CDN}/${thumb}` : "",
-          title
+          image: entry.thumb.length > 0 ? `${NH_THUMB_CDN}/${entry.thumb}` : "",
+          title: entry.base
         }));
       }
       return tiles;
+    }
+    /**
+     * Every gallery belonging to `base`, ordered by volume. One search finds
+     * them; the query already negates the excluded tags, and each result is
+     * re-checked before it is accepted.
+     */
+    async volumesOf(base) {
+      const data = await this.fetchJson(
+        this.searchUrl(seriesQuery(base), "date", 1)
+      );
+      const wanted = base.toLowerCase();
+      const volumes = [];
+      const seen = /* @__PURE__ */ new Set();
+      for (const entry of data.result ?? []) {
+        if (seen.has(entry.id) || !this.admitted(entry.tag_ids)) continue;
+        const raw = (entry.english_title ?? entry.japanese_title ?? "").trim();
+        const split = splitTitle(raw);
+        if (split.base.toLowerCase() !== wanted) continue;
+        seen.add(entry.id);
+        volumes.push({ id: entry.id, title: cleanTitle(raw) || raw, volume: split.volume });
+      }
+      volumes.sort((a, b) => a.volume - b.volume);
+      return volumes;
     }
     async pagedSearch(query, sort, page, seen) {
       const data = await this.fetchJson(this.searchUrl(query, sort, page));
@@ -866,11 +958,27 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         metadata: lastPage ? void 0 : { page: page + 1, seen: Array.from(seen) }
       });
     }
+    /**
+     * Resolves whichever gallery should speak for an entry: the first volume
+     * of a merged series, or the gallery itself for a plain numeric id (which
+     * is what a library entry from before merging, or a shared link, carries).
+     */
+    async representativeId(mangaId) {
+      if (!isSeriesId(mangaId)) return Number(mangaId);
+      const base = baseFromSeriesId(mangaId);
+      const volumes = await this.volumesOf(base);
+      if (volumes.length === 0) {
+        throw new Error(`No volumes found for "${base}".`);
+      }
+      return volumes[0].id;
+    }
     async getMangaDetails(mangaId) {
-      const gallery = await this.fetchJson(`${NH_API}/galleries/${mangaId}`);
+      const galleryId = await this.representativeId(mangaId);
+      const gallery = await this.fetchJson(`${NH_API}/galleries/${galleryId}`);
       const tags = gallery.tags ?? [];
-      const title = (gallery.title?.pretty ?? gallery.title?.english ?? `Gallery ${mangaId}`).trim();
-      const fullTitle = (gallery.title?.english ?? title).trim();
+      const galleryTitle = (gallery.title?.pretty ?? gallery.title?.english ?? `Gallery ${mangaId}`).trim();
+      const title = isSeriesId(mangaId) ? baseFromSeriesId(mangaId) : galleryTitle;
+      const fullTitle = (gallery.title?.english ?? galleryTitle).trim();
       const artists = tags.filter((tag) => tag.type === "artist").map((tag) => tag.name);
       const byType = /* @__PURE__ */ new Map();
       for (const tag of tags) {
@@ -899,33 +1007,68 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
       });
     }
     /**
-     * A gallery is a single chapter. Built directly from the gallery payload;
-     * upload_date is epoch seconds.
+     * Each volume of the series becomes a chapter, keyed on its gallery id.
+     *
+     * Upload dates live only on a gallery's own record, never in search
+     * results, so they cost one request per volume. That is affordable for the
+     * handful of volumes a series here runs to, but the API allows only
+     * fifteen requests a minute, so a runaway group is capped rather than
+     * making the app wait minutes -- the remaining chapters simply carry no
+     * date, which beats a wrong one.
      */
     async getChapters(mangaId) {
-      const gallery = await this.fetchJson(`${NH_API}/galleries/${mangaId}`);
-      if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
-        throw new Error("This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.");
+      if (!isSeriesId(mangaId)) {
+        const gallery = await this.fetchJson(`${NH_API}/galleries/${mangaId}`);
+        if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
+          throw new Error("This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.");
+        }
+        return [App.createChapter({
+          id: String(gallery.id),
+          chapNum: 1,
+          name: (gallery.title?.pretty ?? gallery.title?.english ?? "Gallery").trim(),
+          time: gallery.upload_date != void 0 ? new Date(gallery.upload_date * 1e3) : void 0,
+          langCode: "\u{1F1EC}\u{1F1E7}",
+          sortingIndex: 0
+        })];
       }
-      const uploaded = gallery.upload_date != void 0 ? new Date(gallery.upload_date * 1e3) : void 0;
-      return [App.createChapter({
-        id: "gallery",
-        chapNum: 1,
-        name: (gallery.title?.pretty ?? gallery.title?.english ?? "Gallery").trim(),
-        time: uploaded,
+      const base = baseFromSeriesId(mangaId);
+      const volumes = await this.volumesOf(base);
+      if (volumes.length === 0) {
+        throw new Error(`No volumes found for "${base}".`);
+      }
+      const DATE_BUDGET = 8;
+      const times = {};
+      for (const volume of volumes.slice(0, DATE_BUDGET)) {
+        try {
+          const gallery = await this.fetchJson(`${NH_API}/galleries/${volume.id}`);
+          times[volume.id] = gallery.upload_date != void 0 ? new Date(gallery.upload_date * 1e3) : void 0;
+        } catch {
+        }
+      }
+      return volumes.map((volume, index) => App.createChapter({
+        id: String(volume.id),
+        chapNum: volume.volume,
+        name: volume.title,
+        time: times[volume.id],
         langCode: "\u{1F1EC}\u{1F1E7}",
-        sortingIndex: 0
-      })];
+        sortingIndex: index
+      }));
     }
+    /**
+     * The chapter id is the gallery to read. `gallery` is accepted as well,
+     * the id the source handed out before volumes were merged, so an entry
+     * already in the library keeps working.
+     */
     async getChapterDetails(mangaId, chapterId) {
-      const gallery = await this.fetchJson(`${NH_API}/galleries/${mangaId}`);
+      const galleryId = /^\d+$/.test(chapterId) ? chapterId : String(await this.representativeId(mangaId));
+      const gallery = await this.fetchJson(`${NH_API}/galleries/${galleryId}`);
       const pages = [];
       for (const page of gallery.pages ?? []) {
         const path = (page.path ?? "").replace(/^\/+/, "");
         if (path.length > 0) pages.push(`${NH_IMAGE_CDN}/${path}`);
       }
       if (pages.length === 0) {
-        throw new Error(`No pages were returned for gallery ${mangaId}.`);
+        throw new Error(`No pages were returned for gallery ${galleryId}.`);
       }
       return App.createChapterDetails({
         id: chapterId,
