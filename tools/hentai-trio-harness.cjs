@@ -143,10 +143,20 @@ const expectGateThrow = async (label, fn) => {
             !tagLabels.some((label) => /^(yaoi|males only|ugly bastard|bald)$/i.test(label)),
             tagLabels.filter((l) => /yaoi|males only|ugly bastard|bald/i.test(l)).join(',') || 'clean')
 
+        // Written before volumes were merged, this used to demand exactly one
+        // chapter; a listing entry is now a series and may legitimately carry
+        // several. What must hold is that the volumes are distinct, ordered,
+        // and that the one whose record was fetched for the details carries a
+        // real date.
         const chapters = await s.getChapters(id)
-        check('gallery is a single dated chapter',
-            chapters.length === 1 && chapters[0].time instanceof Date && !isNaN(chapters[0].time.getTime()),
-            `${chapters.length} chapter, ${chapters[0]?.time?.toISOString()?.slice(0, 10)}`)
+        check('entry lists its volumes as ordered, distinct chapters',
+            chapters.length >= 1
+                && new Set(chapters.map((c) => c.id)).size === chapters.length
+                && chapters.every((c, i) => i === 0 || chapters[i - 1].chapNum <= c.chapNum),
+            `${chapters.length} chapter(s): ${chapters.map((c) => c.chapNum).join(',')}`)
+        check('the representative volume carries a real date',
+            chapters.some((c) => c.time instanceof Date && !isNaN(c.time.getTime())),
+            chapters.filter((c) => c.time instanceof Date).length + ' of ' + chapters.length + ' dated')
 
         const pages = await s.getChapterDetails(id, 'gallery')
         check('pages resolve', pages.pages.length > 1 && pages.pages.every((p) => p.startsWith('https://')),

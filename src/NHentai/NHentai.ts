@@ -181,7 +181,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '1.1.0',
+    version: '1.2.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -200,9 +200,15 @@ export const NHentaiInfo: SourceInfo = {
 
 export class NHentai implements SearchResultsProviding, MangaProviding, ChapterProviding, HomePageSectionsProviding, CloudflareBypassRequestProviding {
     requestManager = App.createRequestManager({
-        // The API allows 15 requests a minute anonymously and answers 429
-        // beyond it, so the source paces itself well inside that.
-        requestsPerSecond: 0.2,
+        // The API's anonymous ceiling is fifteen requests a minute, and it
+        // answers 429 past it, so this sits exactly on that budget.
+        //
+        // It used to pace at one every five seconds, which was well inside the
+        // budget but made opening an entry take twenty seconds -- four requests
+        // apiece, because details and chapters each ran their own sibling
+        // search. The memo below cut that to two, so the same safe rate now
+        // opens an entry in about four seconds.
+        requestsPerSecond: 0.25,
         requestTimeout: 60000,
         interceptor: {
             interceptRequest: async (request: Request): Promise<Request> => {
@@ -258,11 +264,50 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         }
     }
 
+    /**
+     * Short-lived memo of things just fetched, so that opening an entry costs
+     * one round of requests rather than two.
+     *
+     * Paperback calls getMangaDetails and getChapters back to back, and both
+     * need the same sibling search and the same gallery record; without this
+     * each open paid for them twice. Entries are dropped after a couple of
+     * minutes so a refresh still sees new volumes.
+     */
+    private memo = new Map<string, { at: number; value: unknown }>()
+
+    private remembered<T>(key: string): T | undefined {
+        const entry = this.memo.get(key)
+        if (entry == undefined) return undefined
+
+        if (Date.now() - entry.at > 120000) {
+            this.memo.delete(key)
+            return undefined
+        }
+        return entry.value as T
+    }
+
+    private remember(key: string, value: unknown): void {
+        // Bounded so a long browse cannot grow it without limit.
+        if (this.memo.size > 40) this.memo.clear()
+        this.memo.set(key, { at: Date.now(), value: value })
+    }
+
     private async fetchJson<T>(url: string): Promise<T> {
         const request = App.createRequest({ url: url, method: 'GET' })
         const response = await this.requestManager.schedule(request, 3)
         this.checkResponse(response.status)
         return JSON.parse(response.data as string) as T
+    }
+
+    /** A gallery record, reused if it was fetched moments ago. */
+    private async gallery(galleryId: number | string): Promise<ApiGallery> {
+        const key = `g:${galleryId}`
+        const cached = this.remembered<ApiGallery>(key)
+        if (cached != undefined) return cached
+
+        const gallery = await this.fetchJson<ApiGallery>(`${NH_API}/galleries/${galleryId}`)
+        this.remember(key, gallery)
+        return gallery
     }
 
     /** URL-safe form of a search query, negations included. */
@@ -328,6 +373,10 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
      * re-checked before it is accepted.
      */
     private async volumesOf(base: string): Promise<{ id: number; title: string; volume: number }[]> {
+        const key = `v:${base.toLowerCase()}`
+        const cached = this.remembered<{ id: number; title: string; volume: number }[]>(key)
+        if (cached != undefined) return cached
+
         const data = await this.fetchJson<{ result?: ApiListing[] }>(
             this.searchUrl(seriesQuery(base), 'date', 1)
         )
@@ -348,6 +397,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         }
 
         volumes.sort((a, b) => a.volume - b.volume)
+        this.remember(key, volumes)
         return volumes
     }
 
@@ -382,7 +432,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
 
     async getMangaDetails(mangaId: string): Promise<SourceManga> {
         const galleryId = await this.representativeId(mangaId)
-        const gallery = await this.fetchJson<ApiGallery>(`${NH_API}/galleries/${galleryId}`)
+        const gallery = await this.gallery(galleryId)
 
         const tags = gallery.tags ?? []
         // A merged entry is named for the series, not for whichever volume
@@ -441,7 +491,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
      */
     async getChapters(mangaId: string): Promise<Chapter[]> {
         if (!isSeriesId(mangaId)) {
-            const gallery = await this.fetchJson<ApiGallery>(`${NH_API}/galleries/${mangaId}`)
+            const gallery = await this.gallery(mangaId)
             if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
                 throw new Error('This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.')
             }
@@ -462,16 +512,15 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             throw new Error(`No volumes found for "${base}".`)
         }
 
-        const DATE_BUDGET = 8
+        // Dates are taken only from gallery records already in hand -- opening
+        // an entry fetches the first volume's record for its details, so that
+        // one is dated for free. Fetching the rest would cost a request per
+        // volume against a fifteen-a-minute budget, which is what made the
+        // source unusable; a missing date beats an entry that never loads.
         const times: Record<number, Date | undefined> = {}
-        for (const volume of volumes.slice(0, DATE_BUDGET)) {
-            try {
-                const gallery = await this.fetchJson<ApiGallery>(`${NH_API}/galleries/${volume.id}`)
-                times[volume.id] = gallery.upload_date != undefined ? new Date(gallery.upload_date * 1000) : undefined
-            } catch {
-                // A volume whose record will not load keeps its place in the
-                // list without a date.
-            }
+        for (const volume of volumes) {
+            const cached = this.remembered<ApiGallery>(`g:${volume.id}`)
+            if (cached?.upload_date != undefined) times[volume.id] = new Date(cached.upload_date * 1000)
         }
 
         return volumes.map((volume, index) => App.createChapter({
@@ -491,7 +540,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
      */
     async getChapterDetails(mangaId: string, chapterId: string): Promise<ChapterDetails> {
         const galleryId = /^\d+$/.test(chapterId) ? chapterId : String(await this.representativeId(mangaId))
-        const gallery = await this.fetchJson<ApiGallery>(`${NH_API}/galleries/${galleryId}`)
+        const gallery = await this.gallery(galleryId)
 
         const pages: string[] = []
         for (const page of gallery.pages ?? []) {
