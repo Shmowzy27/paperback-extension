@@ -68,7 +68,7 @@ interface ListingMetadata {
  * engine's own minus operator instead, and the details gate backstops both.
  */
 export const HentaiHereInfo: SourceInfo = {
-    version: '1.1.0',
+    version: '1.2.0',
     name: 'HentaiHere (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -151,8 +151,17 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
      * pagination links. The token's session cookie is captured by the app's
      * cookie store when the redirect lands, so later pages just work.
      */
-    private async openFilter(tagIn?: string): Promise<{ html: string; token?: string }> {
-        const form = `action=doFilter&s%5Bseries%5D=&s%5BreleaseAct%5D=in&s%5Brelease%5D=&s%5BtagIn%5D=${encodeURIComponent(tagIn ?? '')}&s%5BtagOut%5D=${BANNED_TAG_ID}`
+    private async openFilter(tagIn?: string[], tagOut?: string[]): Promise<{ html: string; token?: string }> {
+        // Whatever the reader chooses to leave out joins the standing
+        // exclusion rather than replacing it, so yaoi can never be filtered
+        // back in.
+        const excluded = [BANNED_TAG_ID]
+        for (const id of tagOut ?? []) {
+            if (!excluded.includes(id)) excluded.push(id)
+        }
+
+        const included = (tagIn ?? []).join(',')
+        const form = `action=doFilter&s%5Bseries%5D=&s%5BreleaseAct%5D=in&s%5Brelease%5D=&s%5BtagIn%5D=${encodeURIComponent(included)}&s%5BtagOut%5D=${encodeURIComponent(excluded.join(','))}`
         const html = await this.fetchHtml(`${HH_DOMAIN}/filter`, 'POST', form)
         const token = /[?&]s=(sf_[a-z0-9]+)/.exec(html)?.[1]
         return { html, token }
@@ -328,7 +337,16 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
             })
         }
 
-        const tagIn = selected != undefined && /^T?\d+$/.test(selected) ? selected.replace(/^T/, '') : undefined
+        // Tag ids come through as T-prefixed; the filter form wants the bare
+        // number. "Always Excluded" markers are display-only and dropped.
+        const numeric = (tags: { id: string }[] | undefined): string[] =>
+            (tags ?? [])
+                .map((tag) => tag.id)
+                .filter((id) => /^T?\d+$/.test(id))
+                .map((id) => id.replace(/^T/, ''))
+
+        const tagIn = numeric(query.includedTags)
+        const tagOut = numeric(query.excludedTags)
 
         if (metadata?.token != undefined) {
             const html = await this.fetchHtml(this.filterPageUrl(metadata.token, metadata.sort ?? 'newest', page))
@@ -342,7 +360,7 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
             })
         }
 
-        const opened = await this.openFilter(tagIn)
+        const opened = await this.openFilter(tagIn, tagOut)
         const tiles = this.parseTiles(opened.html, seen)
 
         return App.createPagedResults({
@@ -353,9 +371,13 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
         })
     }
 
-    /** The exclusion is fixed by design, so exclusion is not offered. */
+    /**
+     * Exclusion is offered: the site's own filter takes a list of tags to
+     * leave out (`s[tagOut]`), and the reader's choices are added to the
+     * standing exclusion rather than replacing it.
+     */
     async supportsTagExclusion(): Promise<boolean> {
-        return false
+        return true
     }
 
     /**

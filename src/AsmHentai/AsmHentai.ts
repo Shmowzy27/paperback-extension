@@ -50,6 +50,16 @@ const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossd
  */
 const ENGLISH_LANGUAGE_ID = '1'
 
+/** Card annotations, by the attribute that carries them. */
+const ANNOTATION_TYPES: [string, string][] = [
+    ['data-tags', 'tag'],
+    ['data-artists', 'artist'],
+    ['data-parodies', 'parody'],
+    ['data-characters', 'character'],
+    ['data-groups', 'group'],
+    ['data-categories', 'category']
+]
+
 const SECTIONS: { id: string; label: string; path: string }[] = [
     { id: 'latest', label: 'Latest (English)', path: '/language/english/' },
     { id: 'popular', label: 'Most Popular (English)', path: '/language/english/popular/' }
@@ -144,6 +154,13 @@ interface CardRow {
     volume: number
     marked: boolean
     thumb: string
+    /**
+     * The card's own annotations, each prefixed with its type -- "tag:13",
+     * "artist:8986". The site's search has no minus operator and a tag listing
+     * cannot be narrowed by a second tag, so a reader's chosen filters are
+     * applied against these.
+     */
+    annotations: string[]
 }
 
 /**
@@ -160,7 +177,7 @@ interface CardRow {
  * English are dropped the same way, on the cards' language ids.
  */
 export const AsmHentaiInfo: SourceInfo = {
-    version: '1.0.0',
+    version: '1.1.0',
     name: 'AsmHentai (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -288,13 +305,21 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
             let thumb = (card.find('div.image img[data-src], img[data-src]').first().attr('data-src') ?? '').trim()
             if (thumb.startsWith('//')) thumb = `https:${thumb}`
 
+            const annotations: string[] = []
+            for (const [attribute, type] of ANNOTATION_TYPES) {
+                for (const id of (card.attr(attribute) ?? '').split(/\s+/)) {
+                    if (id.length > 0) annotations.push(`${type}:${id}`)
+                }
+            }
+
             rows.push({
                 galleryId: galleryId,
                 base: base,
                 title: marked ? base : (cleanTitle(raw) || raw),
                 volume: volume,
                 marked: marked,
-                thumb: thumb
+                thumb: thumb,
+                annotations: annotations
             })
         }
 
@@ -343,7 +368,7 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
      * Paging is judged on the raw card count, never on the surviving tiles: a
      * thinned page is not the end of a listing.
      */
-    private async pagedListing(path: string, page: number, seen: Set<string>): Promise<PagedResults> {
+    private async pagedListing(path: string, page: number, seen: Set<string>, filters?: { include: string[]; exclude: string[] }): Promise<PagedResults> {
         const tiles: PartialSourceManga[] = []
         let current = page
         let exhausted = false
@@ -356,7 +381,10 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
                 break
             }
 
-            tiles.push(...this.tilesFrom(this.parseCards($), seen))
+            const rows = filters == undefined
+                ? this.parseCards($)
+                : this.parseCards($).filter((row) => this.matches(row, filters))
+            tiles.push(...this.tilesFrom(rows, seen))
             current++
             if (tiles.length >= 10) break
         }
@@ -365,6 +393,74 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
             results: tiles,
             metadata: exhausted ? undefined : { page: current, seen: Array.from(seen) }
         })
+    }
+
+    /**
+     * A chosen filter's numeric id, resolved from the site's own listing for
+     * it: the id of that type carried by every card on `/tag/foo/` is the tag
+     * itself. Needed because the catalogs are offered as slugs while the cards
+     * annotate themselves with numbers, and the site's search has no minus
+     * operator to lean on instead.
+     *
+     * Resolved once per filter and remembered; an unresolvable one is
+     * remembered too, so a bad slug is not retried on every page.
+     */
+    private annotationIds = new Map<string, string | undefined>()
+
+    private async annotationId(tagId: string): Promise<string | undefined> {
+        if (this.annotationIds.has(tagId)) return this.annotationIds.get(tagId)
+
+        const separator = tagId.indexOf(':')
+        const type = separator < 0 ? 'tag' : tagId.slice(0, separator)
+        const slug = separator < 0 ? tagId : tagId.slice(separator + 1)
+
+        const attribute = (ANNOTATION_TYPES.find((entry) => entry[1] === type) ?? ['data-tags'])[0]
+        let resolved: string | undefined
+
+        try {
+            const html = await this.fetchHtml(`${ASM_DOMAIN}/${type}/${slug}/`)
+
+            const perCard = [...html.matchAll(new RegExp(`${attribute}="([^"]*)"`, 'g'))]
+                .map((match) => (match[1] as string).split(/\s+/).filter((id) => id.length > 0))
+            if (perCard.length > 0) {
+                const common = perCard.reduce((carried, ids) => carried.filter((id) => ids.includes(id)), perCard[0] as string[])
+                if (common.length === 1) resolved = common[0]
+            }
+        } catch {
+            // Left unresolved; the filter is simply not applied.
+        }
+
+        this.annotationIds.set(tagId, resolved)
+        return resolved
+    }
+
+    /**
+     * The reader's chosen filters as card annotations. The first included one
+     * is handled by browsing its own listing, so only the rest need applying
+     * card by card.
+     */
+    private async resolveFilters(query: SearchRequest, skipFirstInclude: boolean): Promise<{ include: string[]; exclude: string[] }> {
+        const includeTags = (query.includedTags ?? []).map((tag) => tag.id)
+        const rest = skipFirstInclude ? includeTags.slice(1) : includeTags
+
+        const include: string[] = []
+        for (const id of rest) {
+            const resolved = await this.annotationId(id)
+            if (resolved != undefined) include.push(`${id.split(':')[0]}:${resolved}`)
+        }
+
+        const exclude: string[] = []
+        for (const tag of query.excludedTags ?? []) {
+            const resolved = await this.annotationId(tag.id)
+            if (resolved != undefined) exclude.push(`${tag.id.split(':')[0]}:${resolved}`)
+        }
+
+        return { include: include, exclude: exclude }
+    }
+
+    private matches(row: CardRow, filters: { include: string[]; exclude: string[] }): boolean {
+        if (filters.exclude.some((id) => row.annotations.includes(id))) return false
+        return filters.include.every((id) => row.annotations.includes(id))
     }
 
     /** Every gallery belonging to `base`, ordered by volume. */
@@ -583,14 +679,17 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
         const selected = (query.includedTags ?? [])[0]?.id
 
         // A typed title goes through the site's search; its results are held
-        // to the same card-level English and exclusion rules as any listing.
+        // to the same card-level English and exclusion rules as any listing,
+        // and to whatever the reader chose to include or leave out -- the
+        // search itself takes no operators, so those are applied per card.
         if (title.length > 0) {
+            const filters = await this.resolveFilters(query, false)
             const $ = await this.loadPage(
                 page <= 1
                     ? `${ASM_DOMAIN}/search/?q=${encodeURIComponent(title)}`
                     : `${ASM_DOMAIN}/search/?q=${encodeURIComponent(title)}&page=${page}`
             )
-            const tiles = this.tilesFrom(this.parseCards($), seen)
+            const tiles = this.tilesFrom(this.parseCards($).filter((row) => this.matches(row, filters)), seen)
 
             return App.createPagedResults({
                 results: tiles,
@@ -598,18 +697,25 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
             })
         }
 
-        // A tag selection browses that tag's own listing.
+        // The first chosen filter browses its own listing, which the server can
+        // do; any further ones, and everything to leave out, are applied per
+        // card, since a listing cannot be narrowed by a second tag here.
         const typed = /^([a-z]+):(.+)$/.exec(selected ?? '')
         const path = typed != undefined
             ? `/${typed[1]}/${typed[2]}/`
             : (SECTIONS[0] as { path: string }).path
 
-        return this.pagedListing(path, page, seen)
+        const filters = await this.resolveFilters(query, typed != undefined)
+        return this.pagedListing(path, page, seen, filters)
     }
 
-    /** The exclusions are fixed by design, so exclusion is not offered. */
+    /**
+     * Exclusion is offered. The site's search takes no minus operator, so it
+     * is done against each card's own annotations instead. Whatever the reader
+     * leaves out is on top of the standing exclusions, which cannot be undone.
+     */
     async supportsTagExclusion(): Promise<boolean> {
-        return false
+        return true
     }
 
     /**

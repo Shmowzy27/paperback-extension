@@ -138,10 +138,22 @@ const admitted = (slugs) => WANTED.some((g) => slugs.includes(g)) && !BANNED.som
     }
 
     // ---- tag browse ----
+    // Three sections now: the 18+ genres the source is built around, the rest
+    // of the site's catalog so anything can be included or left out, and the
+    // standing exclusions shown for visibility. The banned genres must not
+    // appear among the catalog on offer.
     const tags = await s.getSearchTags()
-    check('18+ genres offered, exclusions shown',
-        tags[0]?.tags.length === 3 && tags[1]?.tags.length === 3,
-        `${tags[0]?.tags.map((t) => t.id).join(',')} | ${tags[1]?.tags.map((t) => t.id).join(',')}`)
+    const catalog = tags.find((sec) => sec.id === 'other')
+    const offered = (catalog?.tags ?? []).map((t) => t.id)
+    check('18+ genres, a browsable catalog and the exclusions are offered',
+        tags[0]?.tags.length === 3
+            && offered.length > 20
+            && tags[tags.length - 1]?.id === 'excluded',
+        tags.map((sec) => `${sec.id}:${sec.tags.length}`).join(' '))
+    check('banned genres are scrubbed from the catalog',
+        !offered.some((id) => ['gender-bender', 'yaoi', 'shounen-ai'].includes(id)),
+        `${offered.length} genres offered, none banned`)
+    check('tag exclusion is advertised', await s.supportsTagExclusion() === true)
 
     const byGenre = await s.getSearchResults({ title: '', includedTags: [tags[0].tags[0]], excludedTags: [], parameters: {} }, undefined)
     check('browsing a genre tag returns results', byGenre.results.length > 0,

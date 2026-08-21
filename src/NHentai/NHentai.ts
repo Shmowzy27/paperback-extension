@@ -164,6 +164,25 @@ export const isSeriesId = (mangaId: string): boolean => mangaId.startsWith(SERIE
 export const baseFromSeriesId = (mangaId: string): string => mangaId.slice(SERIES_PREFIX.length)
 
 /**
+ * Turns a chosen filter into one of the API's own search terms, with a leading
+ * minus when it is to be left out.
+ *
+ * Tag ids carry their type (`artist:foo`), which is also the id a tag has on a
+ * details page, so tapping one there filters by it. A bare language id has no
+ * type and becomes `language:english`.
+ */
+export const searchTermFor = (tagId: string, exclude: boolean): string => {
+    const separator = tagId.indexOf(':')
+    const known = LANGUAGES.some((entry) => entry.id === tagId)
+
+    const prefix = separator < 0 ? (known ? 'language' : 'tag') : tagId.slice(0, separator)
+    const value = separator < 0 ? tagId : tagId.slice(separator + 1)
+
+    const quoted = /\s/.test(value) ? `"${value.replace(/"/g, '')}"` : value
+    return `${exclude ? '-' : ''}${prefix}:${quoted}`
+}
+
+/**
  * The phrase used to find a series' other volumes. Quotes are stripped and a
  * leading minus neutralised: both are search operators here, and letting them
  * through turns the lookup into a different query -- the same failure that once
@@ -221,7 +240,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '1.7.0',
+    version: '1.8.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -733,32 +752,38 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         const title = (query.title ?? '').trim()
         const selected = (query.includedTags ?? [])[0]?.id
 
-        // A typed query rides on the API's full syntax, so hand-written
-        // `artist:x` or `tag:y` terms keep working; the exclusions are
-        // appended either way.
-        if (title.length > 0) {
-            return this.pagedSearch(title, 'date', page, seen)
+        // Every chosen filter becomes one of the API's own terms, with a
+        // leading minus for the ones to leave out -- the same shape
+        // HentaiNexus uses. A typed query rides along untouched, so
+        // hand-written syntax like `artist:x` still works, and the standing
+        // exclusions are appended on top of whatever is asked for.
+        const terms: string[] = []
+        if (title.length > 0) terms.push(title)
+
+        for (const tag of query.includedTags ?? []) {
+            terms.push(searchTermFor(tag.id, false))
+        }
+        for (const tag of query.excludedTags ?? []) {
+            terms.push(searchTermFor(tag.id, true))
         }
 
-        // A selection is either a language or a `type:name` tag -- the same id
-        // a tag carries on a details page, so tapping one there lands here and
-        // browses it. Anything unrecognised falls back to English.
-        const language = LANGUAGES.find((entry) => entry.id === selected)
-        if (language != undefined) {
-            return this.pagedSearch(`language:${language.id}`, 'date', page, seen)
+        const positive = terms.some((term) => !term.startsWith('-'))
+        if (!positive) {
+            // The API rejects a query that is nothing but negations, so a
+            // browse with only exclusions still needs something to browse.
+            terms.unshift('language:english')
         }
 
-        const typed = /^([a-z]+):(.+)$/.exec(selected ?? '')
-        const q = typed != undefined
-            ? `${typed[1]}:"${(typed[2] as string).replace(/"/g, '')}"`
-            : 'language:english'
-
-        return this.pagedSearch(q, 'date', page, seen)
+        return this.pagedSearch(terms.join(' '), 'date', page, seen)
     }
 
-    /** The exclusions are fixed by design, so exclusion is not offered. */
+    /**
+     * Exclusion is offered: the API negates a term with a leading minus, so a
+     * tag can be filtered out as easily as filtered for. The standing
+     * exclusions are appended regardless and cannot be turned off.
+     */
     async supportsTagExclusion(): Promise<boolean> {
-        return false
+        return true
     }
 
     /**

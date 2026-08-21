@@ -18,6 +18,7 @@ import {
     SourceInfo,
     SourceIntents,
     SourceManga,
+    Tag,
     TagSection
 } from '@paperback/types'
 
@@ -31,6 +32,7 @@ import {
     MK_DOMAIN,
     MK_WANTED,
     parseChapters,
+    parseGenreCatalog,
     parseMangaDetails,
     parsePages,
     parseTiles,
@@ -47,7 +49,7 @@ import {
  * manhwa, manhua and webtoon all qualify so long as the genres do.
  */
 export const MangaKatanaInfo: SourceInfo = {
-    version: '1.1.0',
+    version: '1.2.0',
     name: 'MangaKatana (18+)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -174,9 +176,16 @@ export class MangaKatana implements SearchResultsProviding, MangaProviding, Chap
      * that the site itself filled, and search pages especially may need
      * several fetches before anything qualifies.
      */
-    private async pagedListing(url: string, page: number, seen: Set<string>): Promise<PagedResults> {
+    private async pagedListing(url: string, page: number, seen: Set<string>, include?: string[], exclude?: string[]): Promise<PagedResults> {
         const $ = await this.loadPage(url)
-        const tiles = this.tilesFrom(parseTiles($), seen)
+
+        // The text search cannot filter by genre, so chosen genres are applied
+        // here against each card's own genre list.
+        const rows = parseTiles($).filter((row) => {
+            if ((exclude ?? []).some((slug) => row.genreSlugs.includes(slug))) return false
+            return (include ?? []).every((slug) => row.genreSlugs.includes(slug))
+        })
+        const tiles = this.tilesFrom(rows, seen)
 
         const exhausted = isLastPage($) || (countCards($) > 0 && tiles.length === 0 && page > 50)
 
@@ -213,36 +222,70 @@ export class MangaKatana implements SearchResultsProviding, MangaProviding, Chap
         const seen = new Set(metadata?.seen ?? [])
 
         const title = (query.title ?? '').trim()
-        const selected = (query.includedTags ?? [])[0]?.id
+
+        // "Always Excluded" entries are display-only markers, not real genres.
+        const chosen = (ids: string[] | undefined): string[] =>
+            (ids ?? []).filter((id) => !id.startsWith('x-'))
+
+        const include = chosen((query.includedTags ?? []).map((tag) => tag.id))
+        const exclude = chosen((query.excludedTags ?? []).map((tag) => tag.id))
 
         // A typed title goes through the site's text search, whose results are
         // then re-checked against the 18+ rule card by card -- the search
-        // endpoint itself cannot filter by genre. A bare tag selection browses
-        // the filtered listing for that genre instead.
+        // endpoint itself cannot filter by genre at all, so a chosen genre is
+        // applied by the card check rather than the URL.
         if (title.length > 0) {
-            return this.pagedListing(searchUrl(title, page), page, seen)
+            return this.pagedListing(searchUrl(title, page), page, seen, include, exclude)
         }
 
-        const wanted = MK_WANTED.find((genre) => genre.slug === selected)
-        const url = wanted != undefined
-            ? filteredListingUrl('latest', page, [wanted.slug])
-            : filteredListingUrl('latest', page)
-
-        return this.pagedListing(url, page, seen)
+        // Genres chosen to include go into the filter as they are. The 18+
+        // rule does not travel with them -- including "action" would otherwise
+        // widen the listing to everything -- but parseTiles still demands a
+        // wanted genre on every card, so the rule holds either way.
+        return this.pagedListing(filteredListingUrl('latest', page, include, exclude), page, seen, include, exclude)
     }
 
-    /** The exclusions are fixed by design, so exclusion is not offered. */
+    /**
+     * Exclusion is offered: the site's own filter takes a list of genres to
+     * leave out, and whatever the reader picks is added to the standing
+     * exclusions rather than replacing them.
+     */
     async supportsTagExclusion(): Promise<boolean> {
-        return false
+        return true
     }
 
+    /**
+     * The site's whole genre list is offered so that any of it can be included
+     * or left out, with the standing exclusions scrubbed from the offer and
+     * shown separately -- picking one of those could never bring the content
+     * back. The 18+ genres lead, since they are what the source is for.
+     *
+     * Read live off the filter form, falling back to the 18+ genres alone if
+     * that request fails, so the screen is never empty.
+     */
     async getSearchTags(): Promise<TagSection[]> {
+        const banned = new Set(MK_BANNED.map((genre) => genre.slug))
+        const wanted = new Set(MK_WANTED.map((genre) => genre.slug))
+
+        let catalog: Tag[] = []
+        try {
+            const genres = parseGenreCatalog(await this.loadPage(`${MK_DOMAIN}/manga/?filter=1`))
+            catalog = genres
+                .filter((genre) => !banned.has(genre.slug) && !wanted.has(genre.slug))
+                .map((genre) => App.createTag({ id: genre.slug, label: genre.label }))
+        } catch {
+            // Leaves the 18+ genres as the whole offer.
+        }
+
         return [
             App.createTagSection({
                 id: 'genre',
                 label: '18+ Genres',
                 tags: MK_WANTED.map((genre) => App.createTag({ id: genre.slug, label: genre.label }))
             }),
+            ...(catalog.length > 0
+                ? [App.createTagSection({ id: 'other', label: 'Other Genres', tags: catalog })]
+                : []),
             // Shown so the exclusions are visible in the filter UI; selecting
             // one still cannot bring the excluded content back.
             App.createTagSection({

@@ -83,7 +83,7 @@ interface ListingMetadata {
  * read or land in the library.
  */
 export const Hentai2ReadInfo: SourceInfo = {
-    version: '1.1.0',
+    version: '1.2.0',
     name: 'Hentai2Read (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -165,7 +165,7 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
      * on every page, but the seen-set carried through the listing drops them
      * after their first appearance.
      */
-    private parseTiles(html: string, seen: Set<string>): PartialSourceManga[] {
+    private parseTiles(html: string, seen: Set<string>, filters?: { include: string[]; exclude: string[] }): PartialSourceManga[] {
         const $ = cheerio.load(html)
         const tiles: PartialSourceManga[] = []
 
@@ -179,6 +179,12 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
 
             const ids = (card.attr('data-tags') ?? '').split('-')
             if (ids.some((id) => BANNED_TAG_IDS.has(id))) continue
+
+            // Whatever the reader chose, applied on the card's own ids.
+            if (filters != undefined) {
+                if (filters.exclude.some((id) => ids.includes(id))) continue
+                if (!filters.include.every((id) => ids.includes(id))) continue
+            }
 
             const anchor = card.find('a[href^="https://hentai2read.com/"]').first()
             const slug = /^https:\/\/hentai2read\.com\/([a-z0-9_]+)\/$/.exec(anchor.attr('href') ?? '')?.[1]
@@ -221,6 +227,67 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
         }
 
         return tiles
+    }
+
+    /**
+     * A category's numeric id, resolved from the site's own listing for it:
+     * the id carried by every card on that category's page is the category
+     * itself. The catalogs are offered as names while cards annotate
+     * themselves with numbers, and the site's search takes no filters, so this
+     * is what lets a reader's choice be applied at all.
+     *
+     * Resolved once and remembered, unresolvable ones included, so a bad name
+     * is not retried on every page.
+     */
+    private categoryIds = new Map<string, string | undefined>()
+
+    private async categoryId(tagId: string): Promise<string | undefined> {
+        if (this.categoryIds.has(tagId)) return this.categoryIds.get(tagId)
+
+        const name = tagId.startsWith('cat:') ? tagId.slice(4) : tagId
+        let resolved: string | undefined
+
+        try {
+            const html = await this.fetchHtml(`${H2R_DOMAIN}/hentai-list/category/${encodeURIComponent(name)}/1/`)
+
+            const perCard = [...html.matchAll(/data-tags="([^"]*)"/g)]
+                .map((match) => (match[1] as string).split('-').filter((id) => id.length > 0))
+            if (perCard.length > 0) {
+                const common = perCard.reduce((carried, ids) => carried.filter((id) => ids.includes(id)), perCard[0] as string[])
+                // 34 sits on every card site-wide, so it is never the answer.
+                const candidates = common.filter((id) => id !== '34')
+                if (candidates.length === 1) resolved = candidates[0]
+            }
+        } catch {
+            // Left unresolved; the filter is simply not applied.
+        }
+
+        this.categoryIds.set(tagId, resolved)
+        return resolved
+    }
+
+    /**
+     * The reader's chosen categories as card ids. The first included one is
+     * handled by browsing its own listing, so only the rest need applying card
+     * by card.
+     */
+    private async resolveFilters(query: SearchRequest, skipFirstInclude: boolean): Promise<{ include: string[]; exclude: string[] }> {
+        const included = (query.includedTags ?? []).map((tag) => tag.id)
+        const rest = skipFirstInclude ? included.slice(1) : included
+
+        const include: string[] = []
+        for (const id of rest) {
+            const resolved = await this.categoryId(id)
+            if (resolved != undefined) include.push(resolved)
+        }
+
+        const exclude: string[] = []
+        for (const tag of query.excludedTags ?? []) {
+            const resolved = await this.categoryId(tag.id)
+            if (resolved != undefined) exclude.push(resolved)
+        }
+
+        return { include: include, exclude: exclude }
     }
 
     private hasNextPage(html: string, page: number): boolean {
@@ -370,6 +437,7 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
         // it accepts no genre filters, so the results lean on the card-level
         // label drop here and on the details gate beyond it.
         if (title.length > 0) {
+            const filters = await this.resolveFilters(query, false)
             const html = await this.fetchHtml(
                 `${H2R_DOMAIN}/hentai-list/search/`,
                 'POST',
@@ -377,17 +445,22 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
             )
 
             return App.createPagedResults({
-                results: this.parseTiles(html, seen),
+                results: this.parseTiles(html, seen, filters),
                 metadata: undefined
             })
         }
 
-        const path = selected != undefined && selected.startsWith('cat:')
+        // The first chosen category browses its own listing, which the server
+        // can do; further ones, and everything to leave out, are applied per
+        // card, the site offering no filter parameters of its own.
+        const browsing = selected != undefined && selected.startsWith('cat:')
+        const path = browsing
             ? `/hentai-list/category/${encodeURIComponent(selected.slice(4))}/${page}/`
             : SECTIONS[0]!.path(page)
 
+        const filters = await this.resolveFilters(query, browsing)
         const html = await this.fetchHtml(`${H2R_DOMAIN}${path}`)
-        const tiles = this.parseTiles(html, seen)
+        const tiles = this.parseTiles(html, seen, filters)
 
         return App.createPagedResults({
             results: tiles,
@@ -395,9 +468,13 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
         })
     }
 
-    /** The exclusion is fixed by design, so exclusion is not offered. */
+    /**
+     * Exclusion is offered. The site takes no filter parameters at all, so it
+     * is done against each card's own tag ids. Whatever the reader leaves out
+     * is on top of the standing exclusions, which cannot be undone.
+     */
     async supportsTagExclusion(): Promise<boolean> {
-        return false
+        return true
     }
 
     /**

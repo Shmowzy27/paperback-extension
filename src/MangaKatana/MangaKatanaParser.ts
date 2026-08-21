@@ -54,11 +54,18 @@ const BANNED_SLUGS = new Set(MK_BANNED.map((genre) => genre.slug))
  * joins the checkbox values that way -- and OR mode admits any wanted genre
  * rather than demanding all four at once.
  */
-export const filteredListingUrl = (order: string, page: number, includeSlugs?: string[]): string => {
+export const filteredListingUrl = (order: string, page: number, includeSlugs?: string[], excludeSlugs?: string[]): string => {
     const include = (includeSlugs != undefined && includeSlugs.length > 0
         ? includeSlugs
         : MK_WANTED.map((genre) => genre.slug)).join('_')
-    const exclude = MK_BANNED.map((genre) => genre.slug).join('_')
+
+    // Whatever the reader chooses to leave out is added to the standing
+    // exclusions, never substituted for them.
+    const excluded = MK_BANNED.map((genre) => genre.slug)
+    for (const slug of excludeSlugs ?? []) {
+        if (!excluded.includes(slug)) excluded.push(slug)
+    }
+    const exclude = excluded.join('_')
 
     const path = page <= 1 ? '/manga/' : `/manga/page/${page}`
     return `${MK_DOMAIN}${path}?filter=1&include=${include}&exclude=${exclude}&include_mode=or&bookmark_opts=off&chapters=1&order=${order}`
@@ -74,6 +81,12 @@ export interface TileRow {
     mangaId: string
     title: string
     image: string
+    /**
+     * The card's own genre slugs. The site's text search cannot filter by
+     * genre, so a genre the reader chose to include or leave out is applied
+     * against this rather than through the URL.
+     */
+    genreSlugs: string[]
 }
 
 /**
@@ -100,6 +113,29 @@ const cardAdmitted = (dataGenre: string): boolean => {
     return ids.some((id) => WANTED_IDS.has(id)) && !ids.some((id) => BANNED_IDS.has(id))
 }
 
+/**
+ * The site's whole genre list, read off its own filter form. Each genre is a
+ * pair of checkboxes -- one to include, one to exclude -- beside a `.name`
+ * label, which is where the reader-facing name comes from.
+ */
+export const parseGenreCatalog = ($: CheerioAPI): { slug: string; label: string }[] => {
+    const genres: { slug: string; label: string }[] = []
+    const seen = new Set<string>()
+
+    for (const element of $('.genres .item').toArray()) {
+        const item = $(element)
+
+        const slug = (item.find('input[name="include_genre_chk"]').first().attr('value') ?? '').trim()
+        const label = item.find('span.name').first().text().trim()
+        if (slug.length === 0 || label.length === 0 || seen.has(slug)) continue
+
+        seen.add(slug)
+        genres.push({ slug: slug, label: label })
+    }
+
+    return genres
+}
+
 /** Listing and search results share the same `#book_list .item` cards. */
 export const parseTiles = ($: CheerioAPI): TileRow[] => {
     const rows: TileRow[] = []
@@ -118,8 +154,14 @@ export const parseTiles = ($: CheerioAPI): TileRow[] => {
         // support that is not worth assuming.
         const image = (card.find('.wrap_img img').first().attr('src') ?? '').trim()
 
+        const genreSlugs: string[] = []
+        for (const link of card.find('.genres a[href*="/genre/"]').toArray()) {
+            const slug = /\/genre\/([a-z0-9-]+)/.exec($(link).attr('href') ?? '')?.[1]
+            if (slug != undefined && !genreSlugs.includes(slug)) genreSlugs.push(slug)
+        }
+
         seen.add(mangaId)
-        rows.push({ mangaId: mangaId, title: title, image: image })
+        rows.push({ mangaId: mangaId, title: title, image: image, genreSlugs: genreSlugs })
     }
 
     return rows
