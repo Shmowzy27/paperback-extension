@@ -108,7 +108,14 @@ export const cleanTitle = (raw: string): string => {
     return text.replace(/\s+/g, ' ').trim().replace(/^[-~:\s]+|[-~:\s]+$/g, '')
 }
 
-export const splitTitle = (title: string): { base: string; volume: number } => {
+/**
+ * `marked` says whether a volume number was actually found. It decides whether
+ * an entry is treated as a series at all, and that decision is what keeps this
+ * source inside the API's budget: a gallery with no volume number cannot have
+ * siblings to look up, so it keeps its own id and opens on a single request
+ * instead of paying for a sibling search that could only ever return itself.
+ */
+export const splitTitle = (title: string): { base: string; volume: number; marked: boolean } => {
     const trimmed = cleanTitle(title)
 
     for (const pattern of VOLUME_PATTERNS) {
@@ -116,10 +123,10 @@ export const splitTitle = (title: string): { base: string; volume: number } => {
         if (!match) continue
 
         const base = (match[1] as string).replace(/[\s\-–—:,]+$/, '').trim()
-        if (base.length > 0) return { base: base, volume: Number(match[2]) }
+        if (base.length > 0) return { base: base, volume: Number(match[2]), marked: true }
     }
 
-    return { base: trimmed.length > 0 ? trimmed : title.trim(), volume: 1 }
+    return { base: trimmed.length > 0 ? trimmed : title.trim(), volume: 1, marked: false }
 }
 
 const SERIES_PREFIX = 's:'
@@ -181,7 +188,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '1.2.0',
+    version: '1.3.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -200,15 +207,17 @@ export const NHentaiInfo: SourceInfo = {
 
 export class NHentai implements SearchResultsProviding, MangaProviding, ChapterProviding, HomePageSectionsProviding, CloudflareBypassRequestProviding {
     requestManager = App.createRequestManager({
-        // The API's anonymous ceiling is fifteen requests a minute, and it
-        // answers 429 past it, so this sits exactly on that budget.
+        // The documented anonymous ceiling is fifteen requests a minute, but
+        // measuring it says otherwise: at exactly that rate the API starts
+        // answering 429 (retry-after: 60) from the eleventh request onward, so
+        // the real allowance is nearer ten a rolling minute. Pacing sat on the
+        // documented figure and tripped the true one, which took out whole
+        // Discover pages, since one 429 fails the section outright.
         //
-        // It used to pace at one every five seconds, which was well inside the
-        // budget but made opening an entry take twenty seconds -- four requests
-        // apiece, because details and chapters each ran their own sibling
-        // search. The memo below cut that to two, so the same safe rate now
-        // opens an entry in about four seconds.
-        requestsPerSecond: 0.25,
+        // Seven seconds is a little over eight a minute, leaving headroom. The
+        // rate alone was never going to be enough, though -- what makes this
+        // workable is that an unnumbered gallery now opens on one request.
+        requestsPerSecond: 0.14,
         requestTimeout: 60000,
         interceptor: {
             interceptRequest: async (request: Request): Promise<Request> => {
@@ -254,7 +263,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             throw new Error(`CLOUDFLARE BYPASS ERROR:\nPlease go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`)
         }
         if (status === 429) {
-            throw new Error('nhentai is rate limiting (HTTP 429). Wait a minute and try again.')
+            throw new Error('nhentai is rate limiting this connection (HTTP 429). It allows about ten requests a minute and clears after sixty seconds -- wait a minute, then pull to refresh.')
         }
         if (status >= 500) {
             throw new Error(`The site returned an error (HTTP ${status}). It is probably down or overloaded -- try again shortly.`)
@@ -333,34 +342,41 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
      * series straddling a page boundary is not emitted twice.
      */
     private tilesFrom(entries: ApiListing[], seen: Set<string>): PartialSourceManga[] {
-        const series = new Map<string, { base: string; volume: number; thumb: string }>()
+        const series = new Map<string, { id: string; title: string; volume: number; thumb: string }>()
 
         for (const entry of entries) {
             if (!this.admitted(entry.tag_ids)) continue
 
             const raw = (entry.english_title ?? entry.japanese_title ?? `Gallery ${entry.id}`).trim()
-            const { base, volume } = splitTitle(raw)
-            const key = base.toLowerCase()
+            const { base, volume, marked } = splitTitle(raw)
+            const thumb = (entry.thumbnail ?? '').replace(/^\/+/, '')
+
+            // Only a numbered gallery becomes a series: it is the one that can
+            // have siblings worth looking up. An unnumbered gallery keeps its
+            // own id, which is what lets it open on a single request.
+            const key = marked ? `s:${base.toLowerCase()}` : `g:${entry.id}`
+            const id = marked ? `s:${base}` : String(entry.id)
+            const title = marked ? base : (cleanTitle(raw) || raw)
 
             const existing = series.get(key)
             if (existing == undefined) {
-                series.set(key, { base: base, volume: volume, thumb: (entry.thumbnail ?? '').replace(/^\/+/, '') })
+                series.set(key, { id: id, title: title, volume: volume, thumb: thumb })
             } else if (volume < existing.volume) {
+                // The lowest-numbered volume on the page supplies the cover.
                 existing.volume = volume
-                existing.thumb = (entry.thumbnail ?? '').replace(/^\/+/, '')
+                existing.thumb = thumb
             }
         }
 
         const tiles: PartialSourceManga[] = []
         for (const [key, entry] of series) {
-            const id = `s:${entry.base}`
             if (seen.has(key)) continue
             seen.add(key)
 
             tiles.push(App.createPartialSourceManga({
-                mangaId: id,
+                mangaId: entry.id,
                 image: entry.thumb.length > 0 ? `${NH_THUMB_CDN}/${entry.thumb}` : '',
-                title: entry.base
+                title: entry.title
             }))
         }
 

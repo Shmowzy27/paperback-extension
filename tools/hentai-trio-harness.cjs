@@ -198,10 +198,18 @@ const expectGateThrow = async (label, fn) => {
             volPages.pages.length > 0 && volPages.pages.every((p) => p.startsWith('https://')),
             `${volPages.pages.length} pages`)
 
-        // Listings must present merged entries, not one tile per volume.
-        check('listing tiles are series entries',
-            sections[0].items.every((t) => t.mangaId.startsWith('s:')),
-            sections[0].items[0].mangaId.slice(0, 40))
+        // Tiles are a deliberate mix. A numbered gallery becomes an `s:` series
+        // so its volumes merge; an unnumbered one keeps its own gallery id,
+        // which is what lets it open on a single request against an API that
+        // allows only about ten a minute. Both forms must be well-formed, and
+        // merging must still be happening.
+        const ids = sections[0].items.map((t) => t.mangaId)
+        const seriesTiles = ids.filter((id) => id.startsWith('s:'))
+        check('tiles are either a merged series or a plain gallery id',
+            ids.length > 0 && ids.every((id) => id.startsWith('s:') || /^\d+$/.test(id)),
+            `${seriesTiles.length} merged of ${ids.length}`)
+        check('numbered galleries are still being merged',
+            seriesTiles.length > 0, seriesTiles.slice(0, 2).join(' | ') || 'none merged')
 
         await expectGateThrow('a yaoi gallery refuses to open', () => s.getMangaDetails('674659'))
 
