@@ -105,7 +105,17 @@ export const cleanTitle = (raw: string): string => {
         previous = text
         text = text.replace(/[\[(（][^\[\]()（）]*[\])）]/g, '')
     }
-    return text.replace(/\s+/g, ' ').trim().replace(/^[-~:\s]+|[-~:\s]+$/g, '')
+
+    // "English Title | 日本語タイトル" is this site's alternative-title form, and
+    // the trailing half is what kept works from merging: the volume number
+    // stops being the end of the string, so no pattern matches and the whole
+    // Chinese or Japanese title lands in the series name. Only the leading
+    // half is kept -- unless it is empty, in which case the title led with the
+    // other language and that half is all there is.
+    const halves = text.split('|').map((half) => half.trim()).filter((half) => half.length > 0)
+    text = halves.length > 0 ? (halves[0] as string) : text
+
+    return text.replace(/\s+/g, ' ').trim().replace(/^[-~:.\s]+|[-~:.\s]+$/g, '')
 }
 
 /**
@@ -122,7 +132,9 @@ export const splitTitle = (title: string): { base: string; volume: number; marke
         const match = pattern.exec(trimmed)
         if (!match) continue
 
-        const base = (match[1] as string).replace(/[\s\-–—:,]+$/, '').trim()
+        // The trailing period matters: "... Hanashi. Ch. 8" leaves "Hanashi."
+        // behind, which would not group with a variant written without it.
+        const base = (match[1] as string).replace(/[\s\-–—:,.]+$/, '').trim()
         if (base.length > 0) return { base: base, volume: Number(match[2]), marked: true }
     }
 
@@ -188,7 +200,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '1.3.0',
+    version: '1.4.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -354,7 +366,12 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             // Only a numbered gallery becomes a series: it is the one that can
             // have siblings worth looking up. An unnumbered gallery keeps its
             // own id, which is what lets it open on a single request.
-            const key = marked ? `s:${base.toLowerCase()}` : `g:${entry.id}`
+            //
+            // Both kinds are still keyed on the title, so the several galleries
+            // this site carries of one unnumbered work -- the same book in
+            // different languages, typically -- collapse to a single tile
+            // instead of filling the page with repeats.
+            const key = `t:${base.toLowerCase()}`
             const id = marked ? `s:${base}` : String(entry.id)
             const title = marked ? base : (cleanTitle(raw) || raw)
 
