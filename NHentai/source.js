@@ -777,14 +777,16 @@ var _Sources = (() => {
       previous = text;
       text = text.replace(/[\[(（][^\[\]()（）]*[\])）]/g, "");
     }
-    return text.replace(/\s+/g, " ").trim().replace(/^[-~:\s]+|[-~:\s]+$/g, "");
+    const halves = text.split("|").map((half) => half.trim()).filter((half) => half.length > 0);
+    text = halves.length > 0 ? halves[0] : text;
+    return text.replace(/\s+/g, " ").trim().replace(/^[-~:.\s]+|[-~:.\s]+$/g, "");
   };
   var splitTitle = (title) => {
     const trimmed = cleanTitle(title);
     for (const pattern of VOLUME_PATTERNS) {
       const match = pattern.exec(trimmed);
       if (!match) continue;
-      const base = match[1].replace(/[\s\-–—:,]+$/, "").trim();
+      const base = match[1].replace(/[\s\-–—:,.]+$/, "").trim();
       if (base.length > 0) return { base, volume: Number(match[2]), marked: true };
     }
     return { base: trimmed.length > 0 ? trimmed : title.trim(), volume: 1, marked: false };
@@ -798,7 +800,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "1.3.0",
+    version: "1.4.0",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -944,7 +946,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         const raw = (entry.english_title ?? entry.japanese_title ?? `Gallery ${entry.id}`).trim();
         const { base, volume, marked } = splitTitle(raw);
         const thumb = (entry.thumbnail ?? "").replace(/^\/+/, "");
-        const key = marked ? `s:${base.toLowerCase()}` : `g:${entry.id}`;
+        const key = `t:${base.toLowerCase()}`;
         const id = marked ? `s:${base}` : String(entry.id);
         const title = marked ? base : cleanTitle(raw) || raw;
         const existing = series.get(key);
