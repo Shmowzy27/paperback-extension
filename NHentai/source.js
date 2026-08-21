@@ -753,6 +753,11 @@ var _Sources = (() => {
     { id: "japanese", label: "Japanese" },
     { id: "chinese", label: "Chinese" }
   ];
+  var TAG_TYPES = [
+    { type: "tag", label: "Tags" },
+    { type: "artist", label: "Artists" },
+    { type: "parody", label: "Parodies" }
+  ];
   var SECTIONS = [
     { id: "new", label: "New Uploads (English)", sort: "date" },
     { id: "popular-week", label: "Popular This Week (English)", sort: "popular-week" },
@@ -800,7 +805,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "1.4.0",
+    version: "1.5.0",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -894,15 +899,15 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
     remembered(key) {
       const entry = this.memo.get(key);
       if (entry == void 0) return void 0;
-      if (Date.now() - entry.at > 12e4) {
+      if (Date.now() - entry.at > entry.ttl) {
         this.memo.delete(key);
         return void 0;
       }
       return entry.value;
     }
-    remember(key, value) {
+    remember(key, value, ttl = 12e4) {
       if (this.memo.size > 40) this.memo.clear();
-      this.memo.set(key, { at: Date.now(), value });
+      this.memo.set(key, { at: Date.now(), value, ttl });
     }
     async fetchJson(url) {
       const request = App.createRequest({ url, method: "GET" });
@@ -1125,29 +1130,76 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
       const seen = new Set(metadata?.seen ?? []);
       const title = (query.title ?? "").trim();
       const selected = (query.includedTags ?? [])[0]?.id;
-      const language = LANGUAGES.find((entry) => entry.id === selected)?.id ?? "english";
-      const q = title.length > 0 ? title : `language:${language}`;
+      if (title.length > 0) {
+        return this.pagedSearch(title, "date", page, seen);
+      }
+      const language = LANGUAGES.find((entry) => entry.id === selected);
+      if (language != void 0) {
+        return this.pagedSearch(`language:${language.id}`, "date", page, seen);
+      }
+      const typed = /^([a-z]+):(.+)$/.exec(selected ?? "");
+      const q = typed != void 0 ? `${typed[1]}:"${typed[2].replace(/"/g, "")}"` : "language:english";
       return this.pagedSearch(q, "date", page, seen);
     }
     /** The exclusions are fixed by design, so exclusion is not offered. */
     async supportsTagExclusion() {
       return false;
     }
+    /**
+     * The browsable catalogs, remembered for an hour: they change rarely, and
+     * re-fetching them on every visit to the filter screen would eat the
+     * request budget for no gain.
+     *
+     * Each type is fetched on its own and kept only if it arrives, so a rate
+     * limit part-way through costs one section rather than the whole screen.
+     * Banned tags are scrubbed from the offer -- they appear in the popular
+     * list, and offering a filter that cannot return anything is worse than
+     * not offering it.
+     */
     async getSearchTags() {
-      return [
+      const sections = [
         App.createTagSection({
           id: "language",
           label: "Language",
           tags: LANGUAGES.map((entry) => App.createTag({ id: entry.id, label: entry.label }))
-        }),
-        // Shown so the standing exclusions are visible in the filter UI;
-        // selecting one cannot bring the content back.
-        App.createTagSection({
-          id: "excluded",
-          label: "Always Excluded",
-          tags: NH_BANNED.map((tag) => App.createTag({ id: `x-${tag.id}`, label: `No ${tag.name}` }))
         })
       ];
+      const bannedNames = new Set(NH_BANNED.map((tag) => tag.name.toLowerCase()));
+      for (const entry of TAG_TYPES) {
+        const key = `tags:${entry.type}`;
+        let tags = this.remembered(key);
+        if (tags == void 0) {
+          try {
+            const data = await this.fetchJson(
+              `${NH_API}/tags/${entry.type}?sort=popular&per_page=100`
+            );
+            tags = [];
+            const seen = /* @__PURE__ */ new Set();
+            for (const tag of data.result ?? []) {
+              const name = (tag.name ?? "").trim();
+              if (name.length === 0 || seen.has(name) || bannedNames.has(name.toLowerCase())) continue;
+              seen.add(name);
+              tags.push({ id: `${entry.type}:${name}`, label: name });
+            }
+            this.remember(key, tags, 36e5);
+          } catch {
+            continue;
+          }
+        }
+        if (tags.length > 0) {
+          sections.push(App.createTagSection({
+            id: entry.type,
+            label: entry.label,
+            tags: tags.map((tag) => App.createTag({ id: tag.id, label: tag.label }))
+          }));
+        }
+      }
+      sections.push(App.createTagSection({
+        id: "excluded",
+        label: "Always Excluded",
+        tags: NH_BANNED.map((tag) => App.createTag({ id: `x-${tag.id}`, label: `No ${tag.name}` }))
+      }));
+      return sections;
     }
     async getHomePageSections(sectionCallback) {
       for (const entry of SECTIONS) {
