@@ -216,10 +216,27 @@ const expectGateThrow = async (label, fn) => {
         const search = await s.getSearchResults({ title: 'milf', includedTags: [], excludedTags: [], parameters: {} }, undefined)
         check('search returns results', search.results.length > 0, `${search.results.length} results`)
 
+        // The filter screen offers language, browsable catalogs read off the
+        // site, and the standing exclusions shown for visibility. The banned
+        // names sit inside the popular tag list, so the scrub is asserted on
+        // the catalogs rather than assumed.
         const tags = await s.getSearchTags()
-        check('language filters and visible exclusions offered',
-            tags[0]?.tags.length === 3 && tags[1]?.tags.length === 4,
-            `${tags[0]?.tags.map((t) => t.id).join(',')} | ${tags[1]?.tags.length} exclusions`)
+        const catalogs = tags.filter((sec) => ['tag', 'artist', 'parody'].includes(sec.id))
+        const offered = catalogs.flatMap((sec) => sec.tags.map((t) => t.label.toLowerCase()))
+        check('language, tag catalogs and exclusions all offered',
+            tags[0]?.tags.length === 3
+                && catalogs.length === 3
+                && catalogs.every((sec) => sec.tags.length > 50)
+                && tags[tags.length - 1]?.id === 'excluded',
+            tags.map((sec) => `${sec.id}:${sec.tags.length}`).join(' '))
+        check('banned tags are scrubbed from the offered catalogs',
+            !offered.some((label) => ['yaoi', 'males only', 'ugly bastard', 'bald'].includes(label)),
+            `${offered.length} tags offered, none banned`)
+
+        const browsable = catalogs[0]?.tags[0]
+        const byTag = await s.getSearchResults({ title: '', includedTags: [browsable], excludedTags: [], parameters: {} }, undefined)
+        check('selecting a catalog tag browses it', byTag.results.length > 0,
+            `${browsable?.id} -> ${byTag.results.length} results`)
     }
 
     // ================= hentaihere =================

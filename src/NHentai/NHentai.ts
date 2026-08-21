@@ -62,6 +62,21 @@ const LANGUAGES: { id: string; label: string }[] = [
     { id: 'chinese', label: 'Chinese' }
 ]
 
+/**
+ * Browsable tag catalogs, the way HentaiNexus offers its categories. Each type
+ * costs one request, and the API caps a page at a hundred entries, so the most
+ * popular of each are offered rather than all 4,696 tags -- pulling the lot
+ * would be forty requests against an allowance of about ten a minute.
+ *
+ * A selected tag becomes the API's own `type:"name"` term, which is the same
+ * id a tag carries on a details page, so tapping one there browses it too.
+ */
+const TAG_TYPES: { type: string; label: string }[] = [
+    { type: 'tag', label: 'Tags' },
+    { type: 'artist', label: 'Artists' },
+    { type: 'parody', label: 'Parodies' }
+]
+
 const SECTIONS: { id: string; label: string; sort: string }[] = [
     { id: 'new', label: 'New Uploads (English)', sort: 'date' },
     { id: 'popular-week', label: 'Popular This Week (English)', sort: 'popular-week' },
@@ -200,7 +215,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '1.4.0',
+    version: '1.5.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -294,23 +309,23 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
      * each open paid for them twice. Entries are dropped after a couple of
      * minutes so a refresh still sees new volumes.
      */
-    private memo = new Map<string, { at: number; value: unknown }>()
+    private memo = new Map<string, { at: number; value: unknown; ttl: number }>()
 
     private remembered<T>(key: string): T | undefined {
         const entry = this.memo.get(key)
         if (entry == undefined) return undefined
 
-        if (Date.now() - entry.at > 120000) {
+        if (Date.now() - entry.at > entry.ttl) {
             this.memo.delete(key)
             return undefined
         }
         return entry.value as T
     }
 
-    private remember(key: string, value: unknown): void {
+    private remember(key: string, value: unknown, ttl: number = 120000): void {
         // Bounded so a long browse cannot grow it without limit.
         if (this.memo.size > 40) this.memo.clear()
-        this.memo.set(key, { at: Date.now(), value: value })
+        this.memo.set(key, { at: Date.now(), value: value, ttl: ttl })
     }
 
     private async fetchJson<T>(url: string): Promise<T> {
@@ -601,10 +616,23 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
 
         // A typed query rides on the API's full syntax, so hand-written
         // `artist:x` or `tag:y` terms keep working; the exclusions are
-        // appended either way. A bare language selection browses that
-        // language; no selection browses English.
-        const language = LANGUAGES.find((entry) => entry.id === selected)?.id ?? 'english'
-        const q = title.length > 0 ? title : `language:${language}`
+        // appended either way.
+        if (title.length > 0) {
+            return this.pagedSearch(title, 'date', page, seen)
+        }
+
+        // A selection is either a language or a `type:name` tag -- the same id
+        // a tag carries on a details page, so tapping one there lands here and
+        // browses it. Anything unrecognised falls back to English.
+        const language = LANGUAGES.find((entry) => entry.id === selected)
+        if (language != undefined) {
+            return this.pagedSearch(`language:${language.id}`, 'date', page, seen)
+        }
+
+        const typed = /^([a-z]+):(.+)$/.exec(selected ?? '')
+        const q = typed != undefined
+            ? `${typed[1]}:"${(typed[2] as string).replace(/"/g, '')}"`
+            : 'language:english'
 
         return this.pagedSearch(q, 'date', page, seen)
     }
@@ -614,21 +642,72 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         return false
     }
 
+    /**
+     * The browsable catalogs, remembered for an hour: they change rarely, and
+     * re-fetching them on every visit to the filter screen would eat the
+     * request budget for no gain.
+     *
+     * Each type is fetched on its own and kept only if it arrives, so a rate
+     * limit part-way through costs one section rather than the whole screen.
+     * Banned tags are scrubbed from the offer -- they appear in the popular
+     * list, and offering a filter that cannot return anything is worse than
+     * not offering it.
+     */
     async getSearchTags(): Promise<TagSection[]> {
-        return [
+        const sections: TagSection[] = [
             App.createTagSection({
                 id: 'language',
                 label: 'Language',
                 tags: LANGUAGES.map((entry) => App.createTag({ id: entry.id, label: entry.label }))
-            }),
-            // Shown so the standing exclusions are visible in the filter UI;
-            // selecting one cannot bring the content back.
-            App.createTagSection({
-                id: 'excluded',
-                label: 'Always Excluded',
-                tags: NH_BANNED.map((tag) => App.createTag({ id: `x-${tag.id}`, label: `No ${tag.name}` }))
             })
         ]
+
+        const bannedNames = new Set(NH_BANNED.map((tag) => tag.name.toLowerCase()))
+
+        for (const entry of TAG_TYPES) {
+            const key = `tags:${entry.type}`
+            let tags = this.remembered<{ id: string; label: string }[]>(key)
+
+            if (tags == undefined) {
+                try {
+                    const data = await this.fetchJson<{ result?: { name?: string; count?: number }[] }>(
+                        `${NH_API}/tags/${entry.type}?sort=popular&per_page=100`
+                    )
+
+                    tags = []
+                    const seen = new Set<string>()
+                    for (const tag of data.result ?? []) {
+                        const name = (tag.name ?? '').trim()
+                        if (name.length === 0 || seen.has(name) || bannedNames.has(name.toLowerCase())) continue
+
+                        seen.add(name)
+                        tags.push({ id: `${entry.type}:${name}`, label: name })
+                    }
+                    this.remember(key, tags, 3600000)
+                } catch {
+                    // Leaves the sections gathered so far in place.
+                    continue
+                }
+            }
+
+            if (tags.length > 0) {
+                sections.push(App.createTagSection({
+                    id: entry.type,
+                    label: entry.label,
+                    tags: tags.map((tag) => App.createTag({ id: tag.id, label: tag.label }))
+                }))
+            }
+        }
+
+        // Shown so the standing exclusions are visible in the filter UI;
+        // selecting one cannot bring the content back.
+        sections.push(App.createTagSection({
+            id: 'excluded',
+            label: 'Always Excluded',
+            tags: NH_BANNED.map((tag) => App.createTag({ id: `x-${tag.id}`, label: `No ${tag.name}` }))
+        }))
+
+        return sections
     }
 
     async getHomePageSections(sectionCallback: (section: HomeSection) => void): Promise<void> {
