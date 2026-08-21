@@ -178,6 +178,10 @@ interface ApiListing {
     japanese_title?: string
     thumbnail?: string
     tag_ids?: number[]
+    // Present on search results, which is what lets a listing entry stand in
+    // for the gallery record on the details screen.
+    media_id?: string
+    num_pages?: number
 }
 
 interface ApiTag {
@@ -215,7 +219,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '1.5.0',
+    version: '1.6.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -323,9 +327,45 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
     }
 
     private remember(key: string, value: unknown, ttl: number = 120000): void {
-        // Bounded so a long browse cannot grow it without limit.
-        if (this.memo.size > 40) this.memo.clear()
+        // Bounded so a long browse cannot grow it without limit. The oldest
+        // half goes rather than the lot, so a big listing page cannot evict
+        // the tag catalogs it just paid for.
+        if (this.memo.size > 400) {
+            const oldest = [...this.memo.entries()]
+                .sort((a, b) => a[1].at - b[1].at)
+                .slice(0, 200)
+            for (const [key] of oldest) this.memo.delete(key)
+        }
         this.memo.set(key, { at: Date.now(), value: value, ttl: ttl })
+    }
+
+    /**
+     * Tag names by id, built from the catalogs the filter screen already
+     * fetches. Listing entries carry only tag ids, so this is what lets an
+     * entry's details be rendered without asking the API for the gallery.
+     * Fetched once and kept for an hour; if it cannot be had, details simply
+     * show fewer tags rather than costing a request.
+     */
+    private async tagNames(): Promise<Map<number, { type: string; name: string }>> {
+        const cached = this.remembered<Map<number, { type: string; name: string }>>('tagmap')
+        if (cached != undefined) return cached
+
+        const map = new Map<number, { type: string; name: string }>()
+        try {
+            const data = await this.fetchJson<{ result?: { id?: number; name?: string; type?: string }[] }>(
+                `${NH_API}/tags/tag?sort=popular&per_page=100`
+            )
+            for (const tag of data.result ?? []) {
+                if (tag.id != undefined && tag.name != undefined) {
+                    map.set(tag.id, { type: tag.type ?? 'tag', name: tag.name })
+                }
+            }
+        } catch {
+            // An empty map just means fewer tags on the details page.
+        }
+
+        this.remember('tagmap', map, 3600000)
+        return map
     }
 
     private async fetchJson<T>(url: string): Promise<T> {
@@ -389,6 +429,11 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             const key = `t:${base.toLowerCase()}`
             const id = marked ? `s:${base}` : String(entry.id)
             const title = marked ? base : (cleanTitle(raw) || raw)
+
+            // The listing entry is kept so that opening this gallery costs no
+            // request at all: it already carries the media id, page count and
+            // tag ids, which is everything the details screen needs.
+            this.remember(`l:${entry.id}`, entry, 1800000)
 
             const existing = series.get(key)
             if (existing == undefined) {
@@ -478,7 +523,59 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         return (volumes[0] as { id: number }).id
     }
 
+    /**
+     * Details for a gallery just seen in a listing, built entirely from the
+     * remembered listing entry -- no request at all, so tapping a title opens
+     * it instantly instead of waiting on an API allowance of ten a minute.
+     *
+     * The listing entry carries the tag ids, so the standing exclusions are
+     * still enforced here. Tag names are resolved from the cached catalog, so
+     * a gallery may show fewer tags than the API would list; the full set
+     * appears once anything fetches the gallery itself.
+     */
+    private async detailsFromListing(mangaId: string): Promise<SourceManga | undefined> {
+        const entry = this.remembered<ApiListing>(`l:${mangaId}`)
+        if (entry == undefined) return undefined
+
+        if (!this.admitted(entry.tag_ids)) {
+            throw new Error('This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.')
+        }
+
+        const names = await this.tagNames()
+        const byType = new Map<string, Tag[]>()
+        for (const id of entry.tag_ids ?? []) {
+            const known = names.get(id)
+            if (known == undefined) continue
+
+            const list = byType.get(known.type) ?? []
+            list.push(App.createTag({ id: `${known.type}:${known.name}`, label: known.name }))
+            byType.set(known.type, list)
+        }
+
+        const sections: TagSection[] = []
+        for (const [type, list] of byType) {
+            sections.push(App.createTagSection({ id: type, label: type.charAt(0).toUpperCase() + type.slice(1), tags: list }))
+        }
+
+        const raw = (entry.english_title ?? entry.japanese_title ?? `Gallery ${mangaId}`).trim()
+        const thumb = (entry.thumbnail ?? '').replace(/^\/+/, '')
+
+        return App.createSourceManga({
+            id: mangaId,
+            mangaInfo: App.createMangaInfo({
+                titles: [cleanTitle(raw) || raw],
+                image: thumb.length > 0 ? `${NH_THUMB_CDN}/${thumb}` : '',
+                desc: `${entry.num_pages ?? '?'} pages.`,
+                status: 'Completed',
+                tags: sections
+            })
+        })
+    }
+
     async getMangaDetails(mangaId: string): Promise<SourceManga> {
+        const instant = await this.detailsFromListing(mangaId)
+        if (instant != undefined) return instant
+
         const galleryId = await this.representativeId(mangaId)
         const gallery = await this.gallery(galleryId)
 
@@ -539,6 +636,26 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
      */
     async getChapters(mangaId: string): Promise<Chapter[]> {
         if (!isSeriesId(mangaId)) {
+            // A gallery just seen in a listing is its own single chapter, and
+            // the remembered entry says so without a request. It carries no
+            // upload date, so the chapter goes undated rather than costing an
+            // API call the reader would wait on.
+            const listed = this.remembered<ApiListing>(`l:${mangaId}`)
+            if (listed != undefined && this.remembered<ApiGallery>(`g:${mangaId}`) == undefined) {
+                if (!this.admitted(listed.tag_ids)) {
+                    throw new Error('This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.')
+                }
+
+                const raw = (listed.english_title ?? listed.japanese_title ?? 'Gallery').trim()
+                return [App.createChapter({
+                    id: String(listed.id),
+                    chapNum: 1,
+                    name: cleanTitle(raw) || raw,
+                    langCode: '🇬🇧',
+                    sortingIndex: 0
+                })]
+            }
+
             const gallery = await this.gallery(mangaId)
             if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
                 throw new Error('This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.')

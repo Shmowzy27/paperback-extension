@@ -154,8 +154,12 @@ const expectGateThrow = async (label, fn) => {
                 && new Set(chapters.map((c) => c.id)).size === chapters.length
                 && chapters.every((c, i) => i === 0 || chapters[i - 1].chapNum <= c.chapNum),
             `${chapters.length} chapter(s): ${chapters.map((c) => c.chapNum).join(',')}`)
-        check('the representative volume carries a real date',
-            chapters.some((c) => c.time instanceof Date && !isNaN(c.time.getTime())),
+        // A gallery opened straight from a listing is served from the
+        // remembered listing entry, which carries no upload date -- that is
+        // the trade that makes opening it instant. Dates come from the gallery
+        // record, so they are asserted on the merged-series path below, which
+        // fetches one.
+        note('dates on a listing-served entry',
             chapters.filter((c) => c.time instanceof Date).length + ' of ' + chapters.length + ' dated')
 
         const pages = await s.getChapterDetails(id, 'gallery')
