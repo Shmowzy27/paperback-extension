@@ -14899,7 +14899,7 @@ var _Sources = (() => {
     { id: "last-updated", label: "Last Updated (Filtered)", sort: "last-updated" }
   ];
   var HentaiHereInfo = {
-    version: "1.1.0",
+    version: "1.2.0",
     name: "HentaiHere (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -14979,8 +14979,13 @@ Please go to the homepage of <${HentaiHereInfo.name}> and press the cloud icon.`
      * pagination links. The token's session cookie is captured by the app's
      * cookie store when the redirect lands, so later pages just work.
      */
-    async openFilter(tagIn) {
-      const form = `action=doFilter&s%5Bseries%5D=&s%5BreleaseAct%5D=in&s%5Brelease%5D=&s%5BtagIn%5D=${encodeURIComponent(tagIn ?? "")}&s%5BtagOut%5D=${BANNED_TAG_ID}`;
+    async openFilter(tagIn, tagOut) {
+      const excluded = [BANNED_TAG_ID];
+      for (const id of tagOut ?? []) {
+        if (!excluded.includes(id)) excluded.push(id);
+      }
+      const included = (tagIn ?? []).join(",");
+      const form = `action=doFilter&s%5Bseries%5D=&s%5BreleaseAct%5D=in&s%5Brelease%5D=&s%5BtagIn%5D=${encodeURIComponent(included)}&s%5BtagOut%5D=${encodeURIComponent(excluded.join(","))}`;
       const html3 = await this.fetchHtml(`${HH_DOMAIN}/filter`, "POST", form);
       const token = /[?&]s=(sf_[a-z0-9]+)/.exec(html3)?.[1];
       return { html: html3, token };
@@ -15107,7 +15112,9 @@ Please go to the homepage of <${HentaiHereInfo.name}> and press the cloud icon.`
           metadata: this.hasNextPage(html3, page) ? { page: page + 1, seen: Array.from(seen) } : void 0
         });
       }
-      const tagIn = selected != void 0 && /^T?\d+$/.test(selected) ? selected.replace(/^T/, "") : void 0;
+      const numeric = (tags) => (tags ?? []).map((tag) => tag.id).filter((id) => /^T?\d+$/.test(id)).map((id) => id.replace(/^T/, ""));
+      const tagIn = numeric(query.includedTags);
+      const tagOut = numeric(query.excludedTags);
       if (metadata?.token != void 0) {
         const html3 = await this.fetchHtml(this.filterPageUrl(metadata.token, metadata.sort ?? "newest", page));
         const tiles2 = this.parseTiles(html3, seen);
@@ -15116,16 +15123,20 @@ Please go to the homepage of <${HentaiHereInfo.name}> and press the cloud icon.`
           metadata: this.hasNextPage(html3, page) ? { page: page + 1, token: metadata.token, sort: metadata.sort, seen: Array.from(seen) } : void 0
         });
       }
-      const opened = await this.openFilter(tagIn);
+      const opened = await this.openFilter(tagIn, tagOut);
       const tiles = this.parseTiles(opened.html, seen);
       return App.createPagedResults({
         results: tiles,
         metadata: opened.token != void 0 && this.hasNextPage(opened.html, 1) ? { page: 2, token: opened.token, sort: "newest", seen: Array.from(seen) } : void 0
       });
     }
-    /** The exclusion is fixed by design, so exclusion is not offered. */
+    /**
+     * Exclusion is offered: the site's own filter takes a list of tags to
+     * leave out (`s[tagOut]`), and the reader's choices are added to the
+     * standing exclusion rather than replacing it.
+     */
     async supportsTagExclusion() {
-      return false;
+      return true;
     }
     /**
      * Categories and content tags read live off the site's own tag indexes,

@@ -731,6 +731,7 @@ var _Sources = (() => {
     baseFromSeriesId: () => baseFromSeriesId,
     cleanTitle: () => cleanTitle,
     isSeriesId: () => isSeriesId,
+    searchTermFor: () => searchTermFor,
     seriesIdFor: () => seriesIdFor,
     seriesQuery: () => seriesQuery,
     splitTitle: () => splitTitle
@@ -802,12 +803,20 @@ var _Sources = (() => {
   var seriesIdFor = (title) => `${SERIES_PREFIX}${splitTitle(title).base}`;
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
+  var searchTermFor = (tagId, exclude) => {
+    const separator = tagId.indexOf(":");
+    const known = LANGUAGES.some((entry) => entry.id === tagId);
+    const prefix = separator < 0 ? known ? "language" : "tag" : tagId.slice(0, separator);
+    const value = separator < 0 ? tagId : tagId.slice(separator + 1);
+    const quoted = /\s/.test(value) ? `"${value.replace(/"/g, "")}"` : value;
+    return `${exclude ? "-" : ""}${prefix}:${quoted}`;
+  };
   var seriesQuery = (base) => {
     const phrase = base.replace(/["]/g, " ").replace(/(^|\s)-+/g, "$1").replace(/\s+/g, " ").trim();
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "1.7.0",
+    version: "1.8.0",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -1219,20 +1228,27 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
       const seen = new Set(metadata?.seen ?? []);
       const title = (query.title ?? "").trim();
       const selected = (query.includedTags ?? [])[0]?.id;
-      if (title.length > 0) {
-        return this.pagedSearch(title, "date", page, seen);
+      const terms = [];
+      if (title.length > 0) terms.push(title);
+      for (const tag of query.includedTags ?? []) {
+        terms.push(searchTermFor(tag.id, false));
       }
-      const language = LANGUAGES.find((entry) => entry.id === selected);
-      if (language != void 0) {
-        return this.pagedSearch(`language:${language.id}`, "date", page, seen);
+      for (const tag of query.excludedTags ?? []) {
+        terms.push(searchTermFor(tag.id, true));
       }
-      const typed = /^([a-z]+):(.+)$/.exec(selected ?? "");
-      const q = typed != void 0 ? `${typed[1]}:"${typed[2].replace(/"/g, "")}"` : "language:english";
-      return this.pagedSearch(q, "date", page, seen);
+      const positive = terms.some((term) => !term.startsWith("-"));
+      if (!positive) {
+        terms.unshift("language:english");
+      }
+      return this.pagedSearch(terms.join(" "), "date", page, seen);
     }
-    /** The exclusions are fixed by design, so exclusion is not offered. */
+    /**
+     * Exclusion is offered: the API negates a term with a leading minus, so a
+     * tag can be filtered out as easily as filtered for. The standing
+     * exclusions are appended regardless and cannot be turned off.
+     */
     async supportsTagExclusion() {
-      return false;
+      return true;
     }
     /**
      * The browsable catalogs, remembered for an hour: they change rarely, and

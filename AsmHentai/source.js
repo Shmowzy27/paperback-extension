@@ -14896,6 +14896,14 @@ var _Sources = (() => {
   var BANNED_TAG_IDS = /* @__PURE__ */ new Set(["13", "32", "88", "87", "534"]);
   var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b/i;
   var ENGLISH_LANGUAGE_ID = "1";
+  var ANNOTATION_TYPES = [
+    ["data-tags", "tag"],
+    ["data-artists", "artist"],
+    ["data-parodies", "parody"],
+    ["data-characters", "character"],
+    ["data-groups", "group"],
+    ["data-categories", "category"]
+  ];
   var SECTIONS = [
     { id: "latest", label: "Latest (English)", path: "/language/english/" },
     { id: "popular", label: "Most Popular (English)", path: "/language/english/popular/" }
@@ -14942,7 +14950,7 @@ var _Sources = (() => {
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
   var AsmHentaiInfo = {
-    version: "1.0.0",
+    version: "1.1.0",
     name: "AsmHentai (English)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -14983,6 +14991,17 @@ var _Sources = (() => {
           }
         }
       });
+      /**
+       * A chosen filter's numeric id, resolved from the site's own listing for
+       * it: the id of that type carried by every card on `/tag/foo/` is the tag
+       * itself. Needed because the catalogs are offered as slugs while the cards
+       * annotate themselves with numbers, and the site's search has no minus
+       * operator to lean on instead.
+       *
+       * Resolved once per filter and remembered; an unresolvable one is
+       * remembered too, so a bad slug is not retried on every page.
+       */
+      this.annotationIds = /* @__PURE__ */ new Map();
     }
     /** A merged series has no page of its own, so sharing one points at search. */
     getMangaShareUrl(mangaId) {
@@ -15049,13 +15068,20 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
         const { base, volume, marked } = splitTitle(raw);
         let thumb = (card.find("div.image img[data-src], img[data-src]").first().attr("data-src") ?? "").trim();
         if (thumb.startsWith("//")) thumb = `https:${thumb}`;
+        const annotations = [];
+        for (const [attribute, type] of ANNOTATION_TYPES) {
+          for (const id of (card.attr(attribute) ?? "").split(/\s+/)) {
+            if (id.length > 0) annotations.push(`${type}:${id}`);
+          }
+        }
         rows.push({
           galleryId,
           base,
           title: marked ? base : cleanTitle(raw) || raw,
           volume,
           marked,
-          thumb
+          thumb,
+          annotations
         });
       }
       return rows;
@@ -15096,7 +15122,7 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
      * Paging is judged on the raw card count, never on the surviving tiles: a
      * thinned page is not the end of a listing.
      */
-    async pagedListing(path, page, seen) {
+    async pagedListing(path, page, seen, filters2) {
       const tiles = [];
       let current = page;
       let exhausted = false;
@@ -15106,7 +15132,8 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
           exhausted = true;
           break;
         }
-        tiles.push(...this.tilesFrom(this.parseCards($2), seen));
+        const rows = filters2 == void 0 ? this.parseCards($2) : this.parseCards($2).filter((row) => this.matches(row, filters2));
+        tiles.push(...this.tilesFrom(rows, seen));
         current++;
         if (tiles.length >= 10) break;
       }
@@ -15114,6 +15141,49 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
         results: tiles,
         metadata: exhausted ? void 0 : { page: current, seen: Array.from(seen) }
       });
+    }
+    async annotationId(tagId) {
+      if (this.annotationIds.has(tagId)) return this.annotationIds.get(tagId);
+      const separator = tagId.indexOf(":");
+      const type = separator < 0 ? "tag" : tagId.slice(0, separator);
+      const slug = separator < 0 ? tagId : tagId.slice(separator + 1);
+      const attribute = (ANNOTATION_TYPES.find((entry) => entry[1] === type) ?? ["data-tags"])[0];
+      let resolved;
+      try {
+        const html3 = await this.fetchHtml(`${ASM_DOMAIN}/${type}/${slug}/`);
+        const perCard = [...html3.matchAll(new RegExp(`${attribute}="([^"]*)"`, "g"))].map((match) => match[1].split(/\s+/).filter((id) => id.length > 0));
+        if (perCard.length > 0) {
+          const common = perCard.reduce((carried, ids) => carried.filter((id) => ids.includes(id)), perCard[0]);
+          if (common.length === 1) resolved = common[0];
+        }
+      } catch {
+      }
+      this.annotationIds.set(tagId, resolved);
+      return resolved;
+    }
+    /**
+     * The reader's chosen filters as card annotations. The first included one
+     * is handled by browsing its own listing, so only the rest need applying
+     * card by card.
+     */
+    async resolveFilters(query, skipFirstInclude) {
+      const includeTags = (query.includedTags ?? []).map((tag) => tag.id);
+      const rest = skipFirstInclude ? includeTags.slice(1) : includeTags;
+      const include = [];
+      for (const id of rest) {
+        const resolved = await this.annotationId(id);
+        if (resolved != void 0) include.push(`${id.split(":")[0]}:${resolved}`);
+      }
+      const exclude = [];
+      for (const tag of query.excludedTags ?? []) {
+        const resolved = await this.annotationId(tag.id);
+        if (resolved != void 0) exclude.push(`${tag.id.split(":")[0]}:${resolved}`);
+      }
+      return { include, exclude };
+    }
+    matches(row, filters2) {
+      if (filters2.exclude.some((id) => row.annotations.includes(id))) return false;
+      return filters2.include.every((id) => row.annotations.includes(id));
     }
     /** Every gallery belonging to `base`, ordered by volume. */
     async volumesOf(base) {
@@ -15290,10 +15360,11 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
       const title = (query.title ?? "").trim();
       const selected = (query.includedTags ?? [])[0]?.id;
       if (title.length > 0) {
+        const filters3 = await this.resolveFilters(query, false);
         const $2 = await this.loadPage(
           page <= 1 ? `${ASM_DOMAIN}/search/?q=${encodeURIComponent(title)}` : `${ASM_DOMAIN}/search/?q=${encodeURIComponent(title)}&page=${page}`
         );
-        const tiles = this.tilesFrom(this.parseCards($2), seen);
+        const tiles = this.tilesFrom(this.parseCards($2).filter((row) => this.matches(row, filters3)), seen);
         return App.createPagedResults({
           results: tiles,
           metadata: $2("div.preview_item").length === 0 ? void 0 : { page: page + 1, seen: Array.from(seen) }
@@ -15301,11 +15372,16 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
       }
       const typed = /^([a-z]+):(.+)$/.exec(selected ?? "");
       const path = typed != void 0 ? `/${typed[1]}/${typed[2]}/` : SECTIONS[0].path;
-      return this.pagedListing(path, page, seen);
+      const filters2 = await this.resolveFilters(query, typed != void 0);
+      return this.pagedListing(path, page, seen, filters2);
     }
-    /** The exclusions are fixed by design, so exclusion is not offered. */
+    /**
+     * Exclusion is offered. The site's search takes no minus operator, so it
+     * is done against each card's own annotations instead. Whatever the reader
+     * leaves out is on top of the standing exclusions, which cannot be undone.
+     */
     async supportsTagExclusion() {
-      return false;
+      return true;
     }
     /**
      * The catalogs read live off the site's own indexes, with anything

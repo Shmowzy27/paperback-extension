@@ -14922,7 +14922,7 @@ var _Sources = (() => {
     { id: "trending", label: "Trending", path: (page) => `/hentai-list/all/any/all/trending/${page}/` }
   ];
   var Hentai2ReadInfo = {
-    version: "1.1.0",
+    version: "1.2.0",
     name: "Hentai2Read (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -14959,6 +14959,17 @@ var _Sources = (() => {
           }
         }
       });
+      /**
+       * A category's numeric id, resolved from the site's own listing for it:
+       * the id carried by every card on that category's page is the category
+       * itself. The catalogs are offered as names while cards annotate
+       * themselves with numbers, and the site's search takes no filters, so this
+       * is what lets a reader's choice be applied at all.
+       *
+       * Resolved once and remembered, unresolvable ones included, so a bad name
+       * is not retried on every page.
+       */
+      this.categoryIds = /* @__PURE__ */ new Map();
     }
     getMangaShareUrl(mangaId) {
       return `${H2R_DOMAIN}/${mangaId}/`;
@@ -15001,7 +15012,7 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
      * on every page, but the seen-set carried through the listing drops them
      * after their first appearance.
      */
-    parseTiles(html3, seen) {
+    parseTiles(html3, seen, filters2) {
       const $2 = load(html3);
       const tiles = [];
       const grid = $2("div.book-grid-item-container[data-tags]").toArray();
@@ -15009,6 +15020,10 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
         const card = $2(element);
         const ids = (card.attr("data-tags") ?? "").split("-");
         if (ids.some((id) => BANNED_TAG_IDS.has(id))) continue;
+        if (filters2 != void 0) {
+          if (filters2.exclude.some((id) => ids.includes(id))) continue;
+          if (!filters2.include.every((id) => ids.includes(id))) continue;
+        }
         const anchor = card.find('a[href^="https://hentai2read.com/"]').first();
         const slug = /^https:\/\/hentai2read\.com\/([a-z0-9_]+)\/$/.exec(anchor.attr("href") ?? "")?.[1];
         if (slug == void 0 || NOT_SERIES.has(slug) || seen.has(slug)) continue;
@@ -15039,6 +15054,43 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
         }));
       }
       return tiles;
+    }
+    async categoryId(tagId) {
+      if (this.categoryIds.has(tagId)) return this.categoryIds.get(tagId);
+      const name = tagId.startsWith("cat:") ? tagId.slice(4) : tagId;
+      let resolved;
+      try {
+        const html3 = await this.fetchHtml(`${H2R_DOMAIN}/hentai-list/category/${encodeURIComponent(name)}/1/`);
+        const perCard = [...html3.matchAll(/data-tags="([^"]*)"/g)].map((match) => match[1].split("-").filter((id) => id.length > 0));
+        if (perCard.length > 0) {
+          const common = perCard.reduce((carried, ids) => carried.filter((id) => ids.includes(id)), perCard[0]);
+          const candidates = common.filter((id) => id !== "34");
+          if (candidates.length === 1) resolved = candidates[0];
+        }
+      } catch {
+      }
+      this.categoryIds.set(tagId, resolved);
+      return resolved;
+    }
+    /**
+     * The reader's chosen categories as card ids. The first included one is
+     * handled by browsing its own listing, so only the rest need applying card
+     * by card.
+     */
+    async resolveFilters(query, skipFirstInclude) {
+      const included = (query.includedTags ?? []).map((tag) => tag.id);
+      const rest = skipFirstInclude ? included.slice(1) : included;
+      const include = [];
+      for (const id of rest) {
+        const resolved = await this.categoryId(id);
+        if (resolved != void 0) include.push(resolved);
+      }
+      const exclude = [];
+      for (const tag of query.excludedTags ?? []) {
+        const resolved = await this.categoryId(tag.id);
+        if (resolved != void 0) exclude.push(resolved);
+      }
+      return { include, exclude };
     }
     hasNextPage(html3, page) {
       const numbers = [...html3.matchAll(/\/(\d+)\/"/g)].map((match) => Number(match[1]));
@@ -15145,27 +15197,34 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
       const title = (query.title ?? "").trim();
       const selected = (query.includedTags ?? [])[0]?.id;
       if (title.length > 0) {
+        const filters3 = await this.resolveFilters(query, false);
         const html4 = await this.fetchHtml(
           `${H2R_DOMAIN}/hentai-list/search/`,
           "POST",
           `cmd_wpm_wgt_mng_sch_sbm=Search&txt_wpm_wgt_mng_sch_nme=${encodeURIComponent(title)}`
         );
         return App.createPagedResults({
-          results: this.parseTiles(html4, seen),
+          results: this.parseTiles(html4, seen, filters3),
           metadata: void 0
         });
       }
-      const path = selected != void 0 && selected.startsWith("cat:") ? `/hentai-list/category/${encodeURIComponent(selected.slice(4))}/${page}/` : SECTIONS[0].path(page);
+      const browsing = selected != void 0 && selected.startsWith("cat:");
+      const path = browsing ? `/hentai-list/category/${encodeURIComponent(selected.slice(4))}/${page}/` : SECTIONS[0].path(page);
+      const filters2 = await this.resolveFilters(query, browsing);
       const html3 = await this.fetchHtml(`${H2R_DOMAIN}${path}`);
-      const tiles = this.parseTiles(html3, seen);
+      const tiles = this.parseTiles(html3, seen, filters2);
       return App.createPagedResults({
         results: tiles,
         metadata: this.hasNextPage(html3, page) ? { page: page + 1, seen: Array.from(seen) } : void 0
       });
     }
-    /** The exclusion is fixed by design, so exclusion is not offered. */
+    /**
+     * Exclusion is offered. The site takes no filter parameters at all, so it
+     * is done against each card's own tag ids. Whatever the reader leaves out
+     * is on top of the standing exclusions, which cannot be undone.
+     */
     async supportsTagExclusion() {
-      return false;
+      return true;
     }
     /**
      * The category catalog read live off the site's own A-Z index, with the

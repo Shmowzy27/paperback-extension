@@ -14902,9 +14902,13 @@ var _Sources = (() => {
   var WANTED_IDS = new Set(MK_WANTED.map((genre) => genre.id));
   var BANNED_IDS = new Set(MK_BANNED.map((genre) => genre.id));
   var BANNED_SLUGS = new Set(MK_BANNED.map((genre) => genre.slug));
-  var filteredListingUrl = (order, page, includeSlugs) => {
+  var filteredListingUrl = (order, page, includeSlugs, excludeSlugs) => {
     const include = (includeSlugs != void 0 && includeSlugs.length > 0 ? includeSlugs : MK_WANTED.map((genre) => genre.slug)).join("_");
-    const exclude = MK_BANNED.map((genre) => genre.slug).join("_");
+    const excluded = MK_BANNED.map((genre) => genre.slug);
+    for (const slug of excludeSlugs ?? []) {
+      if (!excluded.includes(slug)) excluded.push(slug);
+    }
+    const exclude = excluded.join("_");
     const path = page <= 1 ? "/manga/" : `/manga/page/${page}`;
     return `${MK_DOMAIN}${path}?filter=1&include=${include}&exclude=${exclude}&include_mode=or&bookmark_opts=off&chapters=1&order=${order}`;
   };
@@ -14923,6 +14927,19 @@ var _Sources = (() => {
     }
     return ids.some((id) => WANTED_IDS.has(id)) && !ids.some((id) => BANNED_IDS.has(id));
   };
+  var parseGenreCatalog = ($2) => {
+    const genres = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const element of $2(".genres .item").toArray()) {
+      const item = $2(element);
+      const slug = (item.find('input[name="include_genre_chk"]').first().attr("value") ?? "").trim();
+      const label = item.find("span.name").first().text().trim();
+      if (slug.length === 0 || label.length === 0 || seen.has(slug)) continue;
+      seen.add(slug);
+      genres.push({ slug, label });
+    }
+    return genres;
+  };
   var parseTiles = ($2) => {
     const rows = [];
     const seen = /* @__PURE__ */ new Set();
@@ -14934,8 +14951,13 @@ var _Sources = (() => {
       const title = anchor.text().trim();
       if (mangaId == void 0 || title.length === 0 || seen.has(mangaId)) continue;
       const image = (card.find(".wrap_img img").first().attr("src") ?? "").trim();
+      const genreSlugs = [];
+      for (const link of card.find('.genres a[href*="/genre/"]').toArray()) {
+        const slug = /\/genre\/([a-z0-9-]+)/.exec($2(link).attr("href") ?? "")?.[1];
+        if (slug != void 0 && !genreSlugs.includes(slug)) genreSlugs.push(slug);
+      }
       seen.add(mangaId);
-      rows.push({ mangaId, title, image });
+      rows.push({ mangaId, title, image, genreSlugs });
     }
     return rows;
   };
@@ -15038,7 +15060,7 @@ var _Sources = (() => {
 
   // src/MangaKatana/MangaKatana.ts
   var MangaKatanaInfo = {
-    version: "1.1.0",
+    version: "1.2.0",
     name: "MangaKatana (18+)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15143,9 +15165,13 @@ Please go to the homepage of <${MangaKatanaInfo.name}> and press the cloud icon.
      * that the site itself filled, and search pages especially may need
      * several fetches before anything qualifies.
      */
-    async pagedListing(url, page, seen) {
+    async pagedListing(url, page, seen, include, exclude) {
       const $2 = await this.loadPage(url);
-      const tiles = this.tilesFrom(parseTiles($2), seen);
+      const rows = parseTiles($2).filter((row) => {
+        if ((exclude ?? []).some((slug) => row.genreSlugs.includes(slug))) return false;
+        return (include ?? []).every((slug) => row.genreSlugs.includes(slug));
+      });
+      const tiles = this.tilesFrom(rows, seen);
       const exhausted = isLastPage($2) || countCards($2) > 0 && tiles.length === 0 && page > 50;
       return App.createPagedResults({
         results: tiles,
@@ -15173,25 +15199,47 @@ Please go to the homepage of <${MangaKatanaInfo.name}> and press the cloud icon.
       const page = metadata?.page ?? 1;
       const seen = new Set(metadata?.seen ?? []);
       const title = (query.title ?? "").trim();
-      const selected = (query.includedTags ?? [])[0]?.id;
+      const chosen = (ids) => (ids ?? []).filter((id) => !id.startsWith("x-"));
+      const include = chosen((query.includedTags ?? []).map((tag) => tag.id));
+      const exclude = chosen((query.excludedTags ?? []).map((tag) => tag.id));
       if (title.length > 0) {
-        return this.pagedListing(searchUrl(title, page), page, seen);
+        return this.pagedListing(searchUrl(title, page), page, seen, include, exclude);
       }
-      const wanted = MK_WANTED.find((genre) => genre.slug === selected);
-      const url = wanted != void 0 ? filteredListingUrl("latest", page, [wanted.slug]) : filteredListingUrl("latest", page);
-      return this.pagedListing(url, page, seen);
+      return this.pagedListing(filteredListingUrl("latest", page, include, exclude), page, seen, include, exclude);
     }
-    /** The exclusions are fixed by design, so exclusion is not offered. */
+    /**
+     * Exclusion is offered: the site's own filter takes a list of genres to
+     * leave out, and whatever the reader picks is added to the standing
+     * exclusions rather than replacing them.
+     */
     async supportsTagExclusion() {
-      return false;
+      return true;
     }
+    /**
+     * The site's whole genre list is offered so that any of it can be included
+     * or left out, with the standing exclusions scrubbed from the offer and
+     * shown separately -- picking one of those could never bring the content
+     * back. The 18+ genres lead, since they are what the source is for.
+     *
+     * Read live off the filter form, falling back to the 18+ genres alone if
+     * that request fails, so the screen is never empty.
+     */
     async getSearchTags() {
+      const banned = new Set(MK_BANNED.map((genre) => genre.slug));
+      const wanted = new Set(MK_WANTED.map((genre) => genre.slug));
+      let catalog = [];
+      try {
+        const genres = parseGenreCatalog(await this.loadPage(`${MK_DOMAIN}/manga/?filter=1`));
+        catalog = genres.filter((genre) => !banned.has(genre.slug) && !wanted.has(genre.slug)).map((genre) => App.createTag({ id: genre.slug, label: genre.label }));
+      } catch {
+      }
       return [
         App.createTagSection({
           id: "genre",
           label: "18+ Genres",
           tags: MK_WANTED.map((genre) => App.createTag({ id: genre.slug, label: genre.label }))
         }),
+        ...catalog.length > 0 ? [App.createTagSection({ id: "other", label: "Other Genres", tags: catalog })] : [],
         // Shown so the exclusions are visible in the filter UI; selecting
         // one still cannot bring the excluded content back.
         App.createTagSection({
