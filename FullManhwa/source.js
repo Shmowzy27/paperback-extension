@@ -14902,6 +14902,7 @@ var _Sources = (() => {
     { id: "manga", label: "Manga" },
     { id: "adult", label: "Adult" }
   ];
+  var SM_HIDDEN_COOKIE = "say_catalog_hidden_series=%5B%22bl%22%5D; say_catalog_hidden_latest=%5B%22bl%22%5D";
   var SM_GENRE_PREFIX = "genre:";
   var PLACEHOLDER = /^(updating|unknown|none|n\/a|-)$/i;
   var routeFor = (id) => {
@@ -14928,6 +14929,7 @@ var _Sources = (() => {
     const elements = grid.length > 0 ? grid : $2("article.series-card").toArray();
     for (const element of elements) {
       const card = $2(element);
+      if (card.find(".series-type-badge").first().text().trim().toUpperCase() === "BL") continue;
       const href = card.find('a[href*="/series/"]').first().attr("href") ?? "";
       const slug = /\/series\/([^/?#]+)\/?$/.exec(href)?.[1];
       if (slug == void 0 || seen.has(slug)) continue;
@@ -14942,8 +14944,12 @@ var _Sources = (() => {
     }
     return rows;
   };
-  var isLastPage = (rows) => {
-    return rows.length < SM_PAGE_SIZE;
+  var countCards = ($2) => {
+    const grid = $2("section.series-catalog-grid article.series-card").length;
+    return grid > 0 ? grid : $2("article.series-card").length;
+  };
+  var isLastPage = ($2) => {
+    return countCards($2) < SM_PAGE_SIZE;
   };
   var parseGenres = ($2) => {
     const genres = [];
@@ -15100,7 +15106,7 @@ var _Sources = (() => {
 
   // src/FullManhwa/FullManhwa.ts
   var FullManhwaInfo = {
-    version: "2.1.0",
+    version: "2.2.0",
     name: "SayManhwa",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15134,11 +15140,9 @@ var _Sources = (() => {
                 "user-agent": await this.requestManager.getDefaultUserAgent()
               }
             };
-            const stored = this.storedCookies();
-            if (stored.length > 0) {
-              const existing = (request.headers["cookie"] ?? "").trim();
-              request.headers["cookie"] = existing.length > 0 ? `${stored}; ${existing}` : stored;
-            }
+            const stored = [SM_HIDDEN_COOKIE, this.storedCookies()].filter((part) => part.length > 0).join("; ");
+            const existing = (request.headers["cookie"] ?? "").trim();
+            request.headers["cookie"] = existing.length > 0 ? `${stored}; ${existing}` : stored;
             return request;
           },
           interceptResponse: async (response) => {
@@ -15229,13 +15233,35 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
      * stops on a short page, and also when a full page contributed nothing new,
      * which is what a reordered listing looks like from here.
      */
-    async pagedListing(url, page, seen) {
-      const rows = parseTiles(await this.loadPage(url));
-      const tiles = this.tilesFrom(rows, seen);
-      const exhausted = isLastPage(rows) || tiles.length === 0;
+    /**
+     * Walks a listing from `page` until something qualifies or it ends,
+     * returning plain data -- results are never read back off a created
+     * PagedResults, which round-trips off-device and fails on the phone.
+     *
+     * The walk exists because the BL rule can empty a page the site itself
+     * filled -- the latest feed has run ten BL cards of twenty-four and the
+     * completed listing a full page -- and handing the app an empty batch
+     * risks stalling its scroll.
+     */
+    async walkListing(urlFor, page, seen) {
+      const tiles = [];
+      let current = page;
+      for (let hop = 0; hop < 4; hop++) {
+        const $2 = await this.loadPage(urlFor(current));
+        const rows = parseTiles($2);
+        tiles.push(...this.tilesFrom(rows, seen));
+        if (isLastPage($2)) return { tiles };
+        if (rows.length > 0 && tiles.length === 0) return { tiles };
+        current++;
+        if (tiles.length > 0) break;
+      }
+      return { tiles, nextPage: current };
+    }
+    async pagedListing(urlFor, page, seen) {
+      const walk = await this.walkListing(urlFor, page, seen);
       return App.createPagedResults({
-        results: tiles,
-        metadata: exhausted ? void 0 : { page: page + 1, seen: Array.from(seen) }
+        results: walk.tiles,
+        metadata: walk.nextPage == void 0 ? void 0 : { page: walk.nextPage, seen: Array.from(seen) }
       });
     }
     async getMangaDetails(mangaId) {
@@ -15265,8 +15291,8 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
       const seen = new Set(metadata?.seen ?? []);
       const title = (query.title ?? "").trim();
       const selected = (query.includedTags ?? [])[0]?.id;
-      const url = title.length > 0 ? `${SM_BASE}/series?q=${encodeURIComponent(title)}&page=${page}` : this.listingUrl(selected ?? "latest", page);
-      return this.pagedListing(url, page, seen);
+      const urlFor = title.length > 0 ? (p) => `${SM_BASE}/series?q=${encodeURIComponent(title)}&page=${p}` : (p) => this.listingUrl(selected ?? "latest", p);
+      return this.pagedListing(urlFor, page, seen);
     }
     /** The site offers no way to exclude a genre, so exclusion is not claimed. */
     async supportsTagExclusion() {
@@ -15312,15 +15338,15 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
           containsMoreItems: true,
           items: []
         });
-        const rows = parseTiles(await this.loadPage(this.listingUrl(entry.id, 1)));
-        section.items = this.tilesFrom(rows, /* @__PURE__ */ new Set());
+        const walk = await this.walkListing((p) => this.listingUrl(entry.id, p), 1, /* @__PURE__ */ new Set());
+        section.items = walk.tiles;
         sectionCallback(section);
       }
     }
     async getViewMoreItems(homepageSectionId, metadata) {
       const page = metadata?.page ?? 1;
       const seen = new Set(metadata?.seen ?? []);
-      return this.pagedListing(this.listingUrl(homepageSectionId, page), page, seen);
+      return this.pagedListing((p) => this.listingUrl(homepageSectionId, p), page, seen);
     }
   };
   return __toCommonJS(FullManhwa_exports);
