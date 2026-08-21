@@ -805,7 +805,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "1.5.0",
+    version: "1.6.0",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -906,8 +906,36 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
       return entry.value;
     }
     remember(key, value, ttl = 12e4) {
-      if (this.memo.size > 40) this.memo.clear();
+      if (this.memo.size > 400) {
+        const oldest = [...this.memo.entries()].sort((a, b) => a[1].at - b[1].at).slice(0, 200);
+        for (const [key2] of oldest) this.memo.delete(key2);
+      }
       this.memo.set(key, { at: Date.now(), value, ttl });
+    }
+    /**
+     * Tag names by id, built from the catalogs the filter screen already
+     * fetches. Listing entries carry only tag ids, so this is what lets an
+     * entry's details be rendered without asking the API for the gallery.
+     * Fetched once and kept for an hour; if it cannot be had, details simply
+     * show fewer tags rather than costing a request.
+     */
+    async tagNames() {
+      const cached = this.remembered("tagmap");
+      if (cached != void 0) return cached;
+      const map = /* @__PURE__ */ new Map();
+      try {
+        const data = await this.fetchJson(
+          `${NH_API}/tags/tag?sort=popular&per_page=100`
+        );
+        for (const tag of data.result ?? []) {
+          if (tag.id != void 0 && tag.name != void 0) {
+            map.set(tag.id, { type: tag.type ?? "tag", name: tag.name });
+          }
+        }
+      } catch {
+      }
+      this.remember("tagmap", map, 36e5);
+      return map;
     }
     async fetchJson(url) {
       const request = App.createRequest({ url, method: "GET" });
@@ -954,6 +982,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         const key = `t:${base.toLowerCase()}`;
         const id = marked ? `s:${base}` : String(entry.id);
         const title = marked ? base : cleanTitle(raw) || raw;
+        this.remember(`l:${entry.id}`, entry, 18e5);
         const existing = series.get(key);
         if (existing == void 0) {
           series.set(key, { id, title, volume, thumb });
@@ -1025,7 +1054,51 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
       }
       return volumes[0].id;
     }
+    /**
+     * Details for a gallery just seen in a listing, built entirely from the
+     * remembered listing entry -- no request at all, so tapping a title opens
+     * it instantly instead of waiting on an API allowance of ten a minute.
+     *
+     * The listing entry carries the tag ids, so the standing exclusions are
+     * still enforced here. Tag names are resolved from the cached catalog, so
+     * a gallery may show fewer tags than the API would list; the full set
+     * appears once anything fetches the gallery itself.
+     */
+    async detailsFromListing(mangaId) {
+      const entry = this.remembered(`l:${mangaId}`);
+      if (entry == void 0) return void 0;
+      if (!this.admitted(entry.tag_ids)) {
+        throw new Error("This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.");
+      }
+      const names = await this.tagNames();
+      const byType = /* @__PURE__ */ new Map();
+      for (const id of entry.tag_ids ?? []) {
+        const known = names.get(id);
+        if (known == void 0) continue;
+        const list = byType.get(known.type) ?? [];
+        list.push(App.createTag({ id: `${known.type}:${known.name}`, label: known.name }));
+        byType.set(known.type, list);
+      }
+      const sections = [];
+      for (const [type, list] of byType) {
+        sections.push(App.createTagSection({ id: type, label: type.charAt(0).toUpperCase() + type.slice(1), tags: list }));
+      }
+      const raw = (entry.english_title ?? entry.japanese_title ?? `Gallery ${mangaId}`).trim();
+      const thumb = (entry.thumbnail ?? "").replace(/^\/+/, "");
+      return App.createSourceManga({
+        id: mangaId,
+        mangaInfo: App.createMangaInfo({
+          titles: [cleanTitle(raw) || raw],
+          image: thumb.length > 0 ? `${NH_THUMB_CDN}/${thumb}` : "",
+          desc: `${entry.num_pages ?? "?"} pages.`,
+          status: "Completed",
+          tags: sections
+        })
+      });
+    }
     async getMangaDetails(mangaId) {
+      const instant = await this.detailsFromListing(mangaId);
+      if (instant != void 0) return instant;
       const galleryId = await this.representativeId(mangaId);
       const gallery = await this.gallery(galleryId);
       const tags = gallery.tags ?? [];
@@ -1071,6 +1144,20 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
      */
     async getChapters(mangaId) {
       if (!isSeriesId(mangaId)) {
+        const listed = this.remembered(`l:${mangaId}`);
+        if (listed != void 0 && this.remembered(`g:${mangaId}`) == void 0) {
+          if (!this.admitted(listed.tag_ids)) {
+            throw new Error("This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.");
+          }
+          const raw = (listed.english_title ?? listed.japanese_title ?? "Gallery").trim();
+          return [App.createChapter({
+            id: String(listed.id),
+            chapNum: 1,
+            name: cleanTitle(raw) || raw,
+            langCode: "\u{1F1EC}\u{1F1E7}",
+            sortingIndex: 0
+          })];
+        }
         const gallery = await this.gallery(mangaId);
         if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
           throw new Error("This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.");
