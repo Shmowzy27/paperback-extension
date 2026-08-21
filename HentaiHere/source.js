@@ -14891,7 +14891,7 @@ var _Sources = (() => {
   var HH_DOMAIN = "https://hentaihere.com";
   var HH_CDN = "https://hentaicdn.com/hentai";
   var BANNED_TAG_ID = "27";
-  var BANNED_LABELS = /yaoi|shounen[ -]?ai|males only|ugly bastard|\bbald\b|\bfat\b/i;
+  var BANNED_LABELS = /yaoi|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b/i;
   var SEARCH_SUFFIX = " -yaoi";
   var SECTIONS = [
     { id: "newest", label: "Newest (Filtered)", sort: "newest" },
@@ -14899,7 +14899,7 @@ var _Sources = (() => {
     { id: "last-updated", label: "Last Updated (Filtered)", sort: "last-updated" }
   ];
   var HentaiHereInfo = {
-    version: "1.0.0",
+    version: "1.1.0",
     name: "HentaiHere (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",

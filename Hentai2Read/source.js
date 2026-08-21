@@ -14890,7 +14890,7 @@ var _Sources = (() => {
   // src/Hentai2Read/Hentai2Read.ts
   var H2R_DOMAIN = "https://hentai2read.com";
   var H2R_CDN = "https://hentaicdn.com/hentai";
-  var BANNED_LABELS = /yaoi|boy.?love|shounen[ -]?ai|males only|ugly bastard|\bbald\b|\bfat\b/i;
+  var BANNED_LABELS = /yaoi|boy.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b/i;
   var BANNED_CATEGORY_SLUGS = /* @__PURE__ */ new Set(["Yaoi"]);
   var BANNED_TAG_IDS = /* @__PURE__ */ new Set(["27"]);
   var NOT_SERIES = /* @__PURE__ */ new Set([
@@ -14922,7 +14922,7 @@ var _Sources = (() => {
     { id: "trending", label: "Trending", path: (page) => `/hentai-list/all/any/all/trending/${page}/` }
   ];
   var Hentai2ReadInfo = {
-    version: "1.0.0",
+    version: "1.1.0",
     name: "Hentai2Read (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
