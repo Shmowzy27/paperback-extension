@@ -39,7 +39,7 @@ export const ASM_DOMAIN = 'https://asmhentai.com'
  * gate on the details page covers those.
  */
 const BANNED_TAG_IDS = new Set(['13', '32', '88', '87', '534'])
-const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold|\bdilf\b|\bgroup\b|\bbbm\b|\bmm+f\b|\bmonster|\btentacle|\balien\b/i
+const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bmm+f\b|\bmonster|\btentacle|\balien\b/i
 
 /**
  * Anime and game parodies are excluded, leaving original works. The site marks
@@ -203,7 +203,7 @@ interface CardRow {
  * English are dropped the same way, on the cards' language ids.
  */
 export const AsmHentaiInfo: SourceInfo = {
-    version: '1.3.0',
+    version: '1.3.1',
     name: 'AsmHentai (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',

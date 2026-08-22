@@ -2,10 +2,15 @@
  * Checks the standing name-based exclusions against the words they must catch
  * and, just as importantly, the ones they must not.
  *
- * `\bold` is the reason this exists. Matching "old" loosely would also take
- * cuckold, gold, bold and soldier, so it is anchored at the start of a word
- * only -- in those four the letters sit mid-word with no boundary before them.
- * The same care applies to `\bgroup\b` and `\balien\b`.
+ * "old" is the reason this exists, and it went wrong twice. Matched loosely it
+ * takes cuckold, gold, bold and soldier. Anchored to the start of a word it
+ * still took "old lady" and would have taken "grandmother" had "grand" been
+ * added the same way -- but the exclusion was only ever about older *men*.
+ * So the terms are now spelled out (old man, older man, old guy, grandfather,
+ * grandpa, granddad, gramps, dilf), and the older-women tags are listed below
+ * as words that must survive. All of them are real: asmhentai carries "old
+ * lady", "grandmother" and "granddaughter", and nhentai has 502 galleries
+ * under the first and 396 under the second.
  *
  * The pattern is read out of the built bundles rather than restated here, so
  * this cannot drift away from what actually ships.
@@ -16,20 +21,27 @@ const path = require('node:path')
 const MUST_MATCH = [
     'yaoi', 'boys love', 'shounen ai', 'males only', 'tomgirl', 'crossdressing',
     'ugly bastard', 'bald', 'fat', 'gigantic breasts',
-    'old man', 'old guy', 'older man younger woman', 'dilf',
+    // the older-male category, which is what "old" was ever about
+    'old man', 'old men', 'old guy', 'older man younger woman', 'older men',
+    'grandfather', 'grandpa', 'granddad', 'grand-dad', 'gramps', 'dilf',
     'group', 'group sex', 'bbm', 'mmf threesome', 'mmmf',
     'monster', 'monster girl', 'tentacles', 'tentacle', 'alien'
 ]
 
 const MUST_NOT_MATCH = [
-    // the \bold traps
-    'cuckold', 'gold', 'golden shower', 'bold', 'soldier', 'household', 'scold',
+    // Words that merely contain "old". Confirmed harmless by the maintainer.
+    'cuckold', 'gold', 'golden shower', 'golden bazooka', 'goldfish circus',
+    'bold', 'soldier', 'household', 'scold',
+    // Older *women* are a different category and stay. These are real tags:
+    // asmhentai carries all three, and nhentai has 502 galleries under "old
+    // lady" and 396 under "grandmother".
+    'old lady', 'grandmother', 'granddaughter',
+    // "grand" as an ordinary word, likewise real tags on asmhentai.
+    'grand deer', 'grand plie',
     // ordinary tags that must survive
     'big breasts', 'glasses', 'schoolgirl uniform', 'blowjob', 'stockings',
     'elf', 'sole female', 'nakadashi', 'ahegao', 'swimsuit', 'maid', 'nurse',
-    'group of friends'.replace('group of friends', 'friendship'),
-    'grouping'.replace('grouping', 'growth'),
-    'alienation'
+    'friendship', 'growth', 'alienation'
 ]
 
 let failures = 0
@@ -57,12 +69,18 @@ for (const name of sources) {
         const all = names.concat(extra)
 
         const required = ['yaoi', 'males only', 'tomgirl', 'crossdressing', 'ugly bastard',
-            'bald', 'gigantic breasts', 'old man', 'dilf', 'group', 'bbm',
+            'bald', 'gigantic breasts', 'old man', 'grandfather', 'dilf', 'group', 'bbm',
             'mmf threesome', 'monster', 'tentacles', 'alien']
         const missing = required.filter((word) => !all.includes(word))
 
         check(`${name}: every required tag is named`, missing.length === 0,
             missing.join(', ') || `${all.length} names negated`)
+
+        // Named exactly, so the older-women tags cannot be swept up by
+        // accident the way a pattern could sweep them.
+        const overreach = ['old lady', 'grandmother', 'granddaughter'].filter((word) => all.includes(word))
+        check(`${name}: leaves older-women tags alone`, overreach.length === 0,
+            overreach.join(', ') || 'old lady and grandmother untouched')
         continue
     }
 

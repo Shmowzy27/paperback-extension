@@ -48,6 +48,7 @@ export const NH_BANNED: { id: number; name: string }[] = [
     { id: 80498, name: 'gigantic breasts' },
     // age
     { id: 2956, name: 'old man' },
+    { id: 133145, name: 'grandfather' },
     { id: 29013, name: 'dilf' },
     // group and arrangement
     { id: 8010, name: 'group' },
@@ -269,7 +270,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '2.0.0',
+    version: '2.0.1',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
