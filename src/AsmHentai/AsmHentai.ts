@@ -39,7 +39,24 @@ export const ASM_DOMAIN = 'https://asmhentai.com'
  * gate on the details page covers those.
  */
 const BANNED_TAG_IDS = new Set(['13', '32', '88', '87', '534'])
-const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b/i
+const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold|\bdilf\b|\bgroup\b|\bbbm\b|\bmm+f\b|\bmonster|\btentacle|\balien\b/i
+
+/**
+ * Anime and game parodies are excluded, leaving original works. The site marks
+ * the latter with its own "original" parody, id 2721, so a gallery is refused
+ * when it carries any parody other than that one. Nine of twenty English
+ * galleries carry no parody at all, and those are unaffected.
+ */
+const ORIGINAL_PARODY_ID = '2721'
+
+/**
+ * A tag carried by only a handful of galleries is not a genre, it is noise --
+ * a misspelling, an artist's name that landed in the tag table, or a one-off.
+ * They filled the alphabetical catalog with entries like ".labo" that no other
+ * site carries, so the offer stops at tags with a real body of work behind
+ * them.
+ */
+const MIN_CATALOG_GALLERIES = 50
 
 /**
  * Language ids, deduced from the site's own language listings: every card on
@@ -186,7 +203,7 @@ interface CardRow {
  * English are dropped the same way, on the cards' language ids.
  */
 export const AsmHentaiInfo: SourceInfo = {
-    version: '1.2.0',
+    version: '1.3.0',
     name: 'AsmHentai (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -342,6 +359,11 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
                     if (id.length > 0) annotations.push(`${type}:${id}`)
                 }
             }
+
+            // A parody of something is dropped here, before it is ever shown.
+            // The site's own "original" parody is the one that stays.
+            const parodies = (card.attr('data-parodies') ?? '').split(/\s+/).filter((id) => id.length > 0)
+            if (parodies.some((id) => id !== ORIGINAL_PARODY_ID)) continue
 
             rows.push({
                 galleryId: galleryId,
@@ -557,12 +579,18 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
     private guard($: CheerioAPI): void {
         const tags = [
             ...this.metaRow($, 'Tags'),
-            ...this.metaRow($, 'Categor'),
-            ...this.metaRow($, 'Parodies')
+            ...this.metaRow($, 'Categor')
         ]
 
         if (tags.some((tag) => BANNED_LABELS.test(tag.name) || BANNED_TAG_IDS.has(tag.slug))) {
-            throw new Error('This gallery carries content excluded by your settings (BL/yaoi, ugly bastard, bald, tomgirl or crossdressing) and will not be shown.')
+            throw new Error('This gallery carries content excluded by your settings and will not be shown.')
+        }
+
+        // Anything filed under a parody other than the site's own "original"
+        // is a parody of something, which is excluded.
+        const parodies = this.metaRow($, 'Parodies').map((entry) => entry.slug)
+        if (parodies.some((slug) => slug !== 'original')) {
+            throw new Error('This gallery is a parody, which your settings exclude, and will not be shown.')
         }
 
         const languages = this.metaRow($, 'Languages').map((entry) => entry.slug)
@@ -760,9 +788,16 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
 
         for (const element of $(`a[href^="/${type}/"]`).toArray()) {
             const slug = new RegExp(`^/${type}/([^/"]+)/`).exec($(element).attr('href') ?? '')?.[1]
-            const name = $(element).text().replace(/\s*\([\d,]+\)\s*$/, '').replace(/\s+/g, ' ').trim()
+            const text = $(element).text().replace(/\s+/g, ' ').trim()
+            const name = text.replace(/\s*\([\d,]+\)\s*$/, '').trim()
             if (slug == undefined || name.length === 0 || into.has(slug)) continue
             if (BANNED_LABELS.test(name) || BANNED_LABELS.test(slug.replace(/-/g, ' '))) continue
+
+            // Each entry states how many galleries carry it. Anything below the
+            // floor is noise rather than a genre -- misspellings, stray artist
+            // names, one-offs -- and only clutters an alphabetical list.
+            const count = Number((/\(([\d,]+)\)\s*$/.exec(text)?.[1] ?? '0').replace(/,/g, ''))
+            if (count > 0 && count < MIN_CATALOG_GALLERIES) continue
 
             into.set(slug, name)
             added++

@@ -37,13 +37,41 @@ const NH_THUMB_CDN = 'https://t1.nhentai.net'
  * client-side backstop, since listing entries carry only tag_ids.
  */
 export const NH_BANNED: { id: number; name: string }[] = [
+    // BL and male-to-male
     { id: 23895, name: 'yaoi' },
     { id: 21712, name: 'males only' },
+    { id: 29023, name: 'tomgirl' },
+    { id: 15782, name: 'crossdressing' },
+    // appearance
     { id: 162979, name: 'ugly bastard' },
     { id: 73750, name: 'bald' },
-    { id: 29023, name: 'tomgirl' },
-    { id: 15782, name: 'crossdressing' }
+    { id: 80498, name: 'gigantic breasts' },
+    // age
+    { id: 2956, name: 'old man' },
+    { id: 29013, name: 'dilf' },
+    // group and arrangement
+    { id: 8010, name: 'group' },
+    { id: 31880, name: 'bbm' },
+    { id: 7256, name: 'mmf threesome' },
+    // creatures
+    { id: 18567, name: 'monster' },
+    { id: 7550, name: 'monster girl' },
+    { id: 31775, name: 'tentacles' },
+    { id: 17967, name: 'alien' }
 ]
+
+/**
+ * Names negated in every search but with no id to check a listing entry
+ * against, because the site has no such tag to resolve one from. Harmless to
+ * ask for: the API simply matches nothing.
+ */
+const NH_BANNED_NAMES_ONLY = ['mmmf', 'older man younger woman', 'old guy']
+
+/**
+ * Anime and game parodies are excluded, leaving original works. Anything the
+ * site files under a parody other than its own "original" is refused.
+ */
+const ORIGINAL_PARODY_ID = 90671
 
 const BANNED_IDS = new Set(NH_BANNED.map((tag) => tag.id))
 
@@ -52,6 +80,7 @@ const BANNED_IDS = new Set(NH_BANNED.map((tag) => tag.id))
  * the server never returns the excluded content in the first place.
  */
 const EXCLUSION = NH_BANNED.map((tag) => ` -tag:"${tag.name}"`).join('')
+    + NH_BANNED_NAMES_ONLY.map((name) => ` -tag:"${name}"`).join('')
 
 /**
  * A pure-negative query is rejected by the API, so browse surfaces need a
@@ -240,7 +269,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '1.9.0',
+    version: '2.0.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -417,8 +446,43 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
      * though the query already negates them -- the backstop costs nothing and
      * guards against the server-side syntax ever changing under us.
      */
-    private admitted(tagIds: number[] | undefined): boolean {
-        return !(tagIds ?? []).some((id) => BANNED_IDS.has(id))
+    private admitted(tagIds: number[] | undefined, parodies?: Set<number>): boolean {
+        const ids = tagIds ?? []
+        if (ids.some((id) => BANNED_IDS.has(id))) return false
+
+        // A listing entry mixes every tag type into one id list, so a parody
+        // shows up here too once the parody ids are known.
+        return parodies == undefined || !ids.some((id) => parodies.has(id))
+    }
+
+    /**
+     * The ids of the site's best-known parodies, minus its own "original".
+     *
+     * A listing entry names none of its tags, only their ids, and the site
+     * holds 4,116 parodies -- far too many to enumerate against an allowance
+     * of ten requests a minute. So the popular hundred are fetched once and
+     * kept for an hour, which covers the parodies anyone is likely to meet in
+     * a listing. Anything rarer is still caught the moment the gallery is
+     * opened, where its tags arrive named.
+     */
+    private async parodyIds(): Promise<Set<number>> {
+        const cached = this.remembered<Set<number>>('parodyids')
+        if (cached != undefined) return cached
+
+        const ids = new Set<number>()
+        try {
+            const data = await this.fetchJson<{ result?: { id?: number }[] }>(
+                `${NH_API}/tags/parody?sort=popular&per_page=100`
+            )
+            for (const parody of data.result ?? []) {
+                if (parody.id != undefined && parody.id !== ORIGINAL_PARODY_ID) ids.add(parody.id)
+            }
+        } catch {
+            // An empty set simply leaves the details gate to do the work.
+        }
+
+        this.remember('parodyids', ids, 3600000)
+        return ids
     }
 
     /**
@@ -429,11 +493,11 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
      * `seen` carries the series already handed out by earlier pages, so a
      * series straddling a page boundary is not emitted twice.
      */
-    private tilesFrom(entries: ApiListing[], seen: Set<string>): PartialSourceManga[] {
+    private tilesFrom(entries: ApiListing[], seen: Set<string>, parodies?: Set<number>): PartialSourceManga[] {
         const series = new Map<string, { id: string; title: string; volume: number; thumb: string }>()
 
         for (const entry of entries) {
-            if (!this.admitted(entry.tag_ids)) continue
+            if (!this.admitted(entry.tag_ids, parodies)) continue
 
             const raw = (entry.english_title ?? entry.japanese_title ?? `Gallery ${entry.id}`).trim()
             const { base, volume, marked } = splitTitle(raw)
@@ -519,7 +583,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         const data = await this.fetchJson<{ result?: ApiListing[]; num_pages?: number }>(this.searchUrl(query, sort, page))
 
         const entries = data.result ?? []
-        const tiles = this.tilesFrom(entries, seen)
+        const tiles = this.tilesFrom(entries, seen, await this.parodyIds())
         const lastPage = page >= (data.num_pages ?? 1) || entries.length === 0
 
         return App.createPagedResults({
@@ -558,8 +622,8 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         const entry = this.remembered<ApiListing>(`l:${mangaId}`)
         if (entry == undefined) return undefined
 
-        if (!this.admitted(entry.tag_ids)) {
-            throw new Error('This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.')
+        if (!this.admitted(entry.tag_ids, await this.parodyIds())) {
+            throw new Error('This gallery carries content excluded by your settings and will not be shown.')
         }
 
         const names = await this.tagNames()
@@ -625,9 +689,14 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         }
 
         // The gate: a gallery carrying a banned tag is refused outright, so
-        // even an old bookmark or a shared link cannot open one.
+        // even an old bookmark or a shared link cannot open one. A parody of
+        // something is refused the same way -- only the site's own "original"
+        // parody is allowed through, which is what leaves original works.
         if (tags.some((tag) => BANNED_IDS.has(tag.id))) {
-            throw new Error('This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.')
+            throw new Error('This gallery carries content excluded by your settings and will not be shown.')
+        }
+        if (tags.some((tag) => tag.type === 'parody' && tag.id !== ORIGINAL_PARODY_ID)) {
+            throw new Error('This gallery is a parody, which your settings exclude, and will not be shown.')
         }
 
         const cover = (gallery.cover?.path ?? gallery.thumbnail ?? '').replace(/^\/+/, '')
@@ -663,8 +732,8 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             // API call the reader would wait on.
             const listed = this.remembered<ApiListing>(`l:${mangaId}`)
             if (listed != undefined && this.remembered<ApiGallery>(`g:${mangaId}`) == undefined) {
-                if (!this.admitted(listed.tag_ids)) {
-                    throw new Error('This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.')
+                if (!this.admitted(listed.tag_ids, await this.parodyIds())) {
+                    throw new Error('This gallery carries content excluded by your settings and will not be shown.')
                 }
 
                 const raw = (listed.english_title ?? listed.japanese_title ?? 'Gallery').trim()
@@ -679,7 +748,10 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
 
             const gallery = await this.gallery(mangaId)
             if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
-                throw new Error('This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.')
+                throw new Error('This gallery carries content excluded by your settings and will not be shown.')
+            }
+            if ((gallery.tags ?? []).some((tag) => tag.type === 'parody' && tag.id !== ORIGINAL_PARODY_ID)) {
+                throw new Error('This gallery is a parody, which your settings exclude, and will not be shown.')
             }
 
             return [App.createChapter({

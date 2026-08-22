@@ -52,6 +52,17 @@ export const SM_ORIGINS: { id: string; label: string }[] = [
  */
 export const SM_HIDDEN_COOKIE = 'say_catalog_hidden_series=%5B%22bl%22%5D; say_catalog_hidden_latest=%5B%22bl%22%5D'
 
+/**
+ * Genres kept out of the offered filter list, by standing request.
+ *
+ * Only the offer is scrubbed here, not the listings: this site's cards carry
+ * no genre information at all, so filtering content by genre would mean
+ * fetching every title's own page. The site is manhwa rather than doujinshi,
+ * so the shared exclusion list barely touches it -- monster is the only genre
+ * it has in common.
+ */
+const SM_BANNED_GENRES = /\bmonster/i
+
 /** Genre ids are namespaced so routeFor can tell them from sections/origins. */
 export const SM_GENRE_PREFIX = 'genre:'
 
@@ -172,6 +183,7 @@ export const parseGenres = ($: CheerioAPI): { id: string; label: string }[] => {
         const slug = (option.attr('value') ?? '').trim()
         const label = option.text().trim()
         if (slug.length === 0 || label.length === 0 || seen.has(slug)) continue
+        if (SM_BANNED_GENRES.test(label) || SM_BANNED_GENRES.test(slug.replace(/-/g, ' '))) continue
 
         seen.add(slug)
         genres.push({ id: `${SM_GENRE_PREFIX}${slug}`, label: label })

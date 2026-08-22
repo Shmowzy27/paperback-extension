@@ -35,7 +35,7 @@ const HH_CDN = 'https://hentaicdn.com/hentai'
  * from the tag catalog offered in the filter UI.
  */
 const BANNED_TAG_ID = '27'
-const BANNED_LABELS = /yaoi|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b/i
+const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold|\bdilf\b|\bgroup\b|\bbbm\b|\bmm+f\b|\bmonster|\btentacle|\balien\b/i
 
 /** Appended to every text search; the search engine matches category names. */
 const SEARCH_SUFFIX = ' -yaoi'
@@ -68,7 +68,7 @@ interface ListingMetadata {
  * engine's own minus operator instead, and the details gate backstops both.
  */
 export const HentaiHereInfo: SourceInfo = {
-    version: '1.3.0',
+    version: '1.4.0',
     name: 'HentaiHere (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',

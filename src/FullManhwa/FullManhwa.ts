@@ -47,7 +47,7 @@ import {
  * resolve, so the existing library keeps working.
  */
 export const FullManhwaInfo: SourceInfo = {
-    version: '2.3.0',
+    version: '2.4.0',
     name: 'SayManhwa',
     icon: 'icon.png',
     author: 'Shmowzy27',
