@@ -14894,7 +14894,9 @@ var _Sources = (() => {
   // src/AsmHentai/AsmHentai.ts
   var ASM_DOMAIN = "https://asmhentai.com";
   var BANNED_TAG_IDS = /* @__PURE__ */ new Set(["13", "32", "88", "87", "534"]);
-  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b/i;
+  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold|\bdilf\b|\bgroup\b|\bbbm\b|\bmm+f\b|\bmonster|\btentacle|\balien\b/i;
+  var ORIGINAL_PARODY_ID = "2721";
+  var MIN_CATALOG_GALLERIES = 50;
   var ENGLISH_LANGUAGE_ID = "1";
   var ANNOTATION_TYPES = [
     ["data-tags", "tag"],
@@ -14950,7 +14952,7 @@ var _Sources = (() => {
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
   var AsmHentaiInfo = {
-    version: "1.2.0",
+    version: "1.3.0",
     name: "AsmHentai (English)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15092,6 +15094,8 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
             if (id.length > 0) annotations.push(`${type}:${id}`);
           }
         }
+        const parodies = (card.attr("data-parodies") ?? "").split(/\s+/).filter((id) => id.length > 0);
+        if (parodies.some((id) => id !== ORIGINAL_PARODY_ID)) continue;
         rows.push({
           galleryId,
           base,
@@ -15255,11 +15259,14 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
     guard($2) {
       const tags = [
         ...this.metaRow($2, "Tags"),
-        ...this.metaRow($2, "Categor"),
-        ...this.metaRow($2, "Parodies")
+        ...this.metaRow($2, "Categor")
       ];
       if (tags.some((tag) => BANNED_LABELS.test(tag.name) || BANNED_TAG_IDS.has(tag.slug))) {
-        throw new Error("This gallery carries content excluded by your settings (BL/yaoi, ugly bastard, bald, tomgirl or crossdressing) and will not be shown.");
+        throw new Error("This gallery carries content excluded by your settings and will not be shown.");
+      }
+      const parodies = this.metaRow($2, "Parodies").map((entry) => entry.slug);
+      if (parodies.some((slug) => slug !== "original")) {
+        throw new Error("This gallery is a parody, which your settings exclude, and will not be shown.");
       }
       const languages = this.metaRow($2, "Languages").map((entry) => entry.slug);
       if (languages.length > 0 && !languages.includes("english")) {
@@ -15411,9 +15418,12 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
       let added = 0;
       for (const element of $2(`a[href^="/${type}/"]`).toArray()) {
         const slug = new RegExp(`^/${type}/([^/"]+)/`).exec($2(element).attr("href") ?? "")?.[1];
-        const name = $2(element).text().replace(/\s*\([\d,]+\)\s*$/, "").replace(/\s+/g, " ").trim();
+        const text3 = $2(element).text().replace(/\s+/g, " ").trim();
+        const name = text3.replace(/\s*\([\d,]+\)\s*$/, "").trim();
         if (slug == void 0 || name.length === 0 || into.has(slug)) continue;
         if (BANNED_LABELS.test(name) || BANNED_LABELS.test(slug.replace(/-/g, " "))) continue;
+        const count = Number((/\(([\d,]+)\)\s*$/.exec(text3)?.[1] ?? "0").replace(/,/g, ""));
+        if (count > 0 && count < MIN_CATALOG_GALLERIES) continue;
         into.set(slug, name);
         added++;
       }

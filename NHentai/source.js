@@ -742,15 +742,32 @@ var _Sources = (() => {
   var NH_IMAGE_CDN = "https://i1.nhentai.net";
   var NH_THUMB_CDN = "https://t1.nhentai.net";
   var NH_BANNED = [
+    // BL and male-to-male
     { id: 23895, name: "yaoi" },
     { id: 21712, name: "males only" },
+    { id: 29023, name: "tomgirl" },
+    { id: 15782, name: "crossdressing" },
+    // appearance
     { id: 162979, name: "ugly bastard" },
     { id: 73750, name: "bald" },
-    { id: 29023, name: "tomgirl" },
-    { id: 15782, name: "crossdressing" }
+    { id: 80498, name: "gigantic breasts" },
+    // age
+    { id: 2956, name: "old man" },
+    { id: 29013, name: "dilf" },
+    // group and arrangement
+    { id: 8010, name: "group" },
+    { id: 31880, name: "bbm" },
+    { id: 7256, name: "mmf threesome" },
+    // creatures
+    { id: 18567, name: "monster" },
+    { id: 7550, name: "monster girl" },
+    { id: 31775, name: "tentacles" },
+    { id: 17967, name: "alien" }
   ];
+  var NH_BANNED_NAMES_ONLY = ["mmmf", "older man younger woman", "old guy"];
+  var ORIGINAL_PARODY_ID = 90671;
   var BANNED_IDS = new Set(NH_BANNED.map((tag) => tag.id));
-  var EXCLUSION = NH_BANNED.map((tag) => ` -tag:"${tag.name}"`).join("");
+  var EXCLUSION = NH_BANNED.map((tag) => ` -tag:"${tag.name}"`).join("") + NH_BANNED_NAMES_ONLY.map((name) => ` -tag:"${name}"`).join("");
   var LANGUAGES = [
     { id: "english", label: "English" },
     { id: "japanese", label: "Japanese" },
@@ -816,7 +833,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "1.9.0",
+    version: "2.0.0",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -972,8 +989,36 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
      * though the query already negates them -- the backstop costs nothing and
      * guards against the server-side syntax ever changing under us.
      */
-    admitted(tagIds) {
-      return !(tagIds ?? []).some((id) => BANNED_IDS.has(id));
+    admitted(tagIds, parodies) {
+      const ids = tagIds ?? [];
+      if (ids.some((id) => BANNED_IDS.has(id))) return false;
+      return parodies == void 0 || !ids.some((id) => parodies.has(id));
+    }
+    /**
+     * The ids of the site's best-known parodies, minus its own "original".
+     *
+     * A listing entry names none of its tags, only their ids, and the site
+     * holds 4,116 parodies -- far too many to enumerate against an allowance
+     * of ten requests a minute. So the popular hundred are fetched once and
+     * kept for an hour, which covers the parodies anyone is likely to meet in
+     * a listing. Anything rarer is still caught the moment the gallery is
+     * opened, where its tags arrive named.
+     */
+    async parodyIds() {
+      const cached = this.remembered("parodyids");
+      if (cached != void 0) return cached;
+      const ids = /* @__PURE__ */ new Set();
+      try {
+        const data = await this.fetchJson(
+          `${NH_API}/tags/parody?sort=popular&per_page=100`
+        );
+        for (const parody of data.result ?? []) {
+          if (parody.id != void 0 && parody.id !== ORIGINAL_PARODY_ID) ids.add(parody.id);
+        }
+      } catch {
+      }
+      this.remember("parodyids", ids, 36e5);
+      return ids;
     }
     /**
      * Collapses the volumes on a page into one entry per series, the way
@@ -983,10 +1028,10 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
      * `seen` carries the series already handed out by earlier pages, so a
      * series straddling a page boundary is not emitted twice.
      */
-    tilesFrom(entries, seen) {
+    tilesFrom(entries, seen, parodies) {
       const series = /* @__PURE__ */ new Map();
       for (const entry of entries) {
-        if (!this.admitted(entry.tag_ids)) continue;
+        if (!this.admitted(entry.tag_ids, parodies)) continue;
         const raw = (entry.english_title ?? entry.japanese_title ?? `Gallery ${entry.id}`).trim();
         const { base, volume, marked } = splitTitle(raw);
         const thumb = (entry.thumbnail ?? "").replace(/^\/+/, "");
@@ -1044,7 +1089,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
     async pagedSearch(query, sort, page, seen) {
       const data = await this.fetchJson(this.searchUrl(query, sort, page));
       const entries = data.result ?? [];
-      const tiles = this.tilesFrom(entries, seen);
+      const tiles = this.tilesFrom(entries, seen, await this.parodyIds());
       const lastPage = page >= (data.num_pages ?? 1) || entries.length === 0;
       return App.createPagedResults({
         results: tiles,
@@ -1078,8 +1123,8 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
     async detailsFromListing(mangaId) {
       const entry = this.remembered(`l:${mangaId}`);
       if (entry == void 0) return void 0;
-      if (!this.admitted(entry.tag_ids)) {
-        throw new Error("This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.");
+      if (!this.admitted(entry.tag_ids, await this.parodyIds())) {
+        throw new Error("This gallery carries content excluded by your settings and will not be shown.");
       }
       const names = await this.tagNames();
       const byType = /* @__PURE__ */ new Map();
@@ -1128,7 +1173,10 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         sections.push(App.createTagSection({ id: type, label: type.charAt(0).toUpperCase() + type.slice(1), tags: list }));
       }
       if (tags.some((tag) => BANNED_IDS.has(tag.id))) {
-        throw new Error("This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.");
+        throw new Error("This gallery carries content excluded by your settings and will not be shown.");
+      }
+      if (tags.some((tag) => tag.type === "parody" && tag.id !== ORIGINAL_PARODY_ID)) {
+        throw new Error("This gallery is a parody, which your settings exclude, and will not be shown.");
       }
       const cover = (gallery.cover?.path ?? gallery.thumbnail ?? "").replace(/^\/+/, "");
       return App.createSourceManga({
@@ -1157,8 +1205,8 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
       if (!isSeriesId(mangaId)) {
         const listed = this.remembered(`l:${mangaId}`);
         if (listed != void 0 && this.remembered(`g:${mangaId}`) == void 0) {
-          if (!this.admitted(listed.tag_ids)) {
-            throw new Error("This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.");
+          if (!this.admitted(listed.tag_ids, await this.parodyIds())) {
+            throw new Error("This gallery carries content excluded by your settings and will not be shown.");
           }
           const raw = (listed.english_title ?? listed.japanese_title ?? "Gallery").trim();
           return [App.createChapter({
@@ -1171,7 +1219,10 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         }
         const gallery = await this.gallery(mangaId);
         if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
-          throw new Error("This gallery carries content excluded by your settings (BL/yaoi, ugly bastard or bald) and will not be shown.");
+          throw new Error("This gallery carries content excluded by your settings and will not be shown.");
+        }
+        if ((gallery.tags ?? []).some((tag) => tag.type === "parody" && tag.id !== ORIGINAL_PARODY_ID)) {
+          throw new Error("This gallery is a parody, which your settings exclude, and will not be shown.");
         }
         return [App.createChapter({
           id: String(gallery.id),

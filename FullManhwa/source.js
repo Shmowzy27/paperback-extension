@@ -14903,6 +14903,7 @@ var _Sources = (() => {
     { id: "adult", label: "Adult" }
   ];
   var SM_HIDDEN_COOKIE = "say_catalog_hidden_series=%5B%22bl%22%5D; say_catalog_hidden_latest=%5B%22bl%22%5D";
+  var SM_BANNED_GENRES = /\bmonster/i;
   var SM_GENRE_PREFIX = "genre:";
   var PLACEHOLDER = /^(updating|unknown|none|n\/a|-)$/i;
   var routeFor = (id) => {
@@ -14959,6 +14960,7 @@ var _Sources = (() => {
       const slug = (option.attr("value") ?? "").trim();
       const label = option.text().trim();
       if (slug.length === 0 || label.length === 0 || seen.has(slug)) continue;
+      if (SM_BANNED_GENRES.test(label) || SM_BANNED_GENRES.test(slug.replace(/-/g, " "))) continue;
       seen.add(slug);
       genres.push({ id: `${SM_GENRE_PREFIX}${slug}`, label });
     }
@@ -15106,7 +15108,7 @@ var _Sources = (() => {
 
   // src/FullManhwa/FullManhwa.ts
   var FullManhwaInfo = {
-    version: "2.3.0",
+    version: "2.4.0",
     name: "SayManhwa",
     icon: "icon.png",
     author: "Shmowzy27",
