@@ -14894,7 +14894,7 @@ var _Sources = (() => {
   // src/AsmHentai/AsmHentai.ts
   var ASM_DOMAIN = "https://asmhentai.com";
   var BANNED_TAG_IDS = /* @__PURE__ */ new Set(["13", "32", "88", "87", "534"]);
-  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold|\bdilf\b|\bgroup\b|\bbbm\b|\bmm+f\b|\bmonster|\btentacle|\balien\b/i;
+  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bmm+f\b|\bmonster|\btentacle|\balien\b/i;
   var ORIGINAL_PARODY_ID = "2721";
   var MIN_CATALOG_GALLERIES = 50;
   var ENGLISH_LANGUAGE_ID = "1";
@@ -14952,7 +14952,7 @@ var _Sources = (() => {
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
   var AsmHentaiInfo = {
-    version: "1.3.0",
+    version: "1.3.1",
     name: "AsmHentai (English)",
     icon: "icon.png",
     author: "Shmowzy27",

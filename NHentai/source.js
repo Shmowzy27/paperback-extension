@@ -753,6 +753,7 @@ var _Sources = (() => {
     { id: 80498, name: "gigantic breasts" },
     // age
     { id: 2956, name: "old man" },
+    { id: 133145, name: "grandfather" },
     { id: 29013, name: "dilf" },
     // group and arrangement
     { id: 8010, name: "group" },
@@ -833,7 +834,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "2.0.0",
+    version: "2.0.1",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
