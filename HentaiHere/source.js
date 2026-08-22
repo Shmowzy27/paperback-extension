@@ -14899,7 +14899,7 @@ var _Sources = (() => {
     { id: "last-updated", label: "Last Updated (Filtered)", sort: "last-updated" }
   ];
   var HentaiHereInfo = {
-    version: "1.2.0",
+    version: "1.3.0",
     name: "HentaiHere (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15159,6 +15159,7 @@ Please go to the homepage of <${HentaiHereInfo.name}> and press the cloud icon.`
             tags.push(App.createTag({ id: tagId, label: name }));
           }
           if (tags.length > 0) {
+            tags.sort((a, b) => a.label.localeCompare(b.label));
             sections.push(App.createTagSection({ id: path, label, tags }));
           }
         } catch {

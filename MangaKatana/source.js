@@ -15060,7 +15060,7 @@ var _Sources = (() => {
 
   // src/MangaKatana/MangaKatana.ts
   var MangaKatanaInfo = {
-    version: "1.2.0",
+    version: "1.3.0",
     name: "MangaKatana (18+)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15230,7 +15230,7 @@ Please go to the homepage of <${MangaKatanaInfo.name}> and press the cloud icon.
       let catalog = [];
       try {
         const genres = parseGenreCatalog(await this.loadPage(`${MK_DOMAIN}/manga/?filter=1`));
-        catalog = genres.filter((genre) => !banned.has(genre.slug) && !wanted.has(genre.slug)).map((genre) => App.createTag({ id: genre.slug, label: genre.label }));
+        catalog = genres.filter((genre) => !banned.has(genre.slug) && !wanted.has(genre.slug)).sort((a, b) => a.label.localeCompare(b.label)).map((genre) => App.createTag({ id: genre.slug, label: genre.label }));
       } catch {
       }
       return [

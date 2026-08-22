@@ -14922,7 +14922,7 @@ var _Sources = (() => {
     { id: "trending", label: "Trending", path: (page) => `/hentai-list/all/any/all/trending/${page}/` }
   ];
   var Hentai2ReadInfo = {
-    version: "1.2.0",
+    version: "1.3.0",
     name: "Hentai2Read (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15242,6 +15242,7 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
         seen.add(slug);
         tags.push(App.createTag({ id: `cat:${decodeURIComponent(slug)}`, label }));
       }
+      tags.sort((a, b) => a.label.localeCompare(b.label));
       return tags.length > 0 ? [App.createTagSection({ id: "category", label: "Categories", tags })] : [];
     }
     async getHomePageSections(sectionCallback) {

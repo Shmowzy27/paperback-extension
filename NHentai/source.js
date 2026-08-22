@@ -816,7 +816,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "1.8.0",
+    version: "1.9.0",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -1286,6 +1286,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
               seen.add(name);
               tags.push({ id: `${entry.type}:${name}`, label: name });
             }
+            tags.sort((a, b) => a.label.localeCompare(b.label));
             this.remember(key, tags, 36e5);
           } catch {
             continue;

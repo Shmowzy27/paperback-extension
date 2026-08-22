@@ -14909,10 +14909,10 @@ var _Sources = (() => {
     { id: "popular", label: "Most Popular (English)", path: "/language/english/popular/" }
   ];
   var TAG_TYPES = [
-    { type: "tag", path: "/tags/", label: "Tags" },
-    { type: "artist", path: "/artists/", label: "Artists" },
-    { type: "parody", path: "/parodies/", label: "Parodies" }
+    { type: "tag", path: "/tags/", label: "Tags", byLetter: true },
+    { type: "artist", path: "/artists/", label: "Artists", byLetter: false }
   ];
+  var CATALOG_LETTERS = "abcdefghijklmnopqrstuvwxyz".split("").concat(["num"]);
   var VOLUME = "(\\d{1,3}(?:\\.\\d{1,2})?)";
   var SUBTITLE = "(?:\\s*[:\\-\u2013\u2014]\\s*.+)?";
   var VOLUME_PATTERNS = [
@@ -14950,7 +14950,7 @@ var _Sources = (() => {
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
   var AsmHentaiInfo = {
-    version: "1.1.0",
+    version: "1.2.0",
     name: "AsmHentai (English)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -14992,6 +14992,11 @@ var _Sources = (() => {
         }
       });
       /**
+       * Short-lived memo for things worth not fetching twice -- chiefly the tag
+       * catalogs, which cost a request per letter to gather.
+       */
+      this.memo = /* @__PURE__ */ new Map();
+      /**
        * A chosen filter's numeric id, resolved from the site's own listing for
        * it: the id of that type carried by every card on `/tag/foo/` is the tag
        * itself. Needed because the catalogs are offered as slugs while the cards
@@ -15031,6 +15036,19 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
       if (status < 200 || status >= 300) {
         throw new Error(`Unexpected response from the site (HTTP ${status}).`);
       }
+    }
+    remembered(key) {
+      const entry = this.memo.get(key);
+      if (entry == void 0) return void 0;
+      if (Date.now() - entry.at > entry.ttl) {
+        this.memo.delete(key);
+        return void 0;
+      }
+      return entry.value;
+    }
+    remember(key, value, ttl = 12e4) {
+      if (this.memo.size > 40) this.memo.clear();
+      this.memo.set(key, { at: Date.now(), value, ttl });
     }
     async fetchHtml(url) {
       const request = App.createRequest({ url, method: "GET" });
@@ -15388,27 +15406,56 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
      * matching the standing exclusions scrubbed from the offer -- advertising
      * a filter that cannot return anything is worse than not offering it.
      */
+    /** Reads one index page into a slug/name map, banned names dropped. */
+    collectCatalog($2, type, into) {
+      let added = 0;
+      for (const element of $2(`a[href^="/${type}/"]`).toArray()) {
+        const slug = new RegExp(`^/${type}/([^/"]+)/`).exec($2(element).attr("href") ?? "")?.[1];
+        const name = $2(element).text().replace(/\s*\([\d,]+\)\s*$/, "").replace(/\s+/g, " ").trim();
+        if (slug == void 0 || name.length === 0 || into.has(slug)) continue;
+        if (BANNED_LABELS.test(name) || BANNED_LABELS.test(slug.replace(/-/g, " "))) continue;
+        into.set(slug, name);
+        added++;
+      }
+      return added;
+    }
+    /**
+     * The catalogs, remembered for a day: they change slowly, and gathering
+     * them is the most expensive thing this source does.
+     *
+     * A bare index only ever returns the hundred-odd most popular of its type,
+     * which is what left most of the site's tags unreachable. Tags and parodies
+     * are therefore walked a letter at a time, which is the only way the site
+     * offers to see past that cap. Each letter is one request; the deeper
+     * `?page=` runs behind each letter exist but are not followed, since that
+     * would turn opening the filter screen into eighty-odd requests.
+     *
+     * Everything is sorted by name, so the list reads alphabetically rather
+     * than by popularity.
+     */
     async getSearchTags() {
+      const cached = this.remembered("catalogs");
+      if (cached != void 0) return cached;
       const sections = [];
       for (const entry of TAG_TYPES) {
+        const found = /* @__PURE__ */ new Map();
         try {
-          const $2 = await this.loadPage(`${ASM_DOMAIN}${entry.path}`);
-          const tags = [];
-          const seen = /* @__PURE__ */ new Set();
-          for (const element of $2(`a[href^="/${entry.type}/"]`).toArray()) {
-            const slug = new RegExp(`^/${entry.type}/([^/"]+)/`).exec($2(element).attr("href") ?? "")?.[1];
-            const name = $2(element).text().replace(/\s*\([\d,]+\)\s*$/, "").replace(/\s+/g, " ").trim();
-            if (slug == void 0 || name.length === 0 || seen.has(slug)) continue;
-            if (BANNED_LABELS.test(name) || BANNED_LABELS.test(slug.replace(/-/g, " "))) continue;
-            seen.add(slug);
-            tags.push(App.createTag({ id: `${entry.type}:${slug}`, label: name }));
-          }
-          if (tags.length > 0) {
-            sections.push(App.createTagSection({ id: entry.type, label: entry.label, tags }));
+          this.collectCatalog(await this.loadPage(`${ASM_DOMAIN}${entry.path}`), entry.type, found);
+          if (entry.byLetter) {
+            for (const letter of CATALOG_LETTERS) {
+              try {
+                this.collectCatalog(await this.loadPage(`${ASM_DOMAIN}${entry.path}${letter}/`), entry.type, found);
+              } catch {
+              }
+            }
           }
         } catch {
         }
+        if (found.size === 0) continue;
+        const tags = [...found.entries()].sort((a, b) => a[1].localeCompare(b[1])).map((pair) => App.createTag({ id: `${entry.type}:${pair[0]}`, label: pair[1] }));
+        sections.push(App.createTagSection({ id: entry.type, label: entry.label, tags }));
       }
+      if (sections.length > 0) this.remember("catalogs", sections, 864e5);
       return sections;
     }
     async getHomePageSections(sectionCallback) {

@@ -15106,7 +15106,7 @@ var _Sources = (() => {
 
   // src/FullManhwa/FullManhwa.ts
   var FullManhwaInfo = {
-    version: "2.2.0",
+    version: "2.3.0",
     name: "SayManhwa",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15322,7 +15322,7 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
           sections.push(App.createTagSection({
             id: "genre",
             label: "Genre",
-            tags: genres.map((genre) => App.createTag({ id: genre.id, label: genre.label }))
+            tags: genres.sort((a, b) => a.label.localeCompare(b.label)).map((genre) => App.createTag({ id: genre.id, label: genre.label }))
           }));
         }
       } catch {
