@@ -14890,7 +14890,7 @@ var _Sources = (() => {
   // src/Hentai2Read/Hentai2Read.ts
   var H2R_DOMAIN = "https://hentai2read.com";
   var H2R_CDN = "https://hentaicdn.com/hentai";
-  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bmm+f\b|\bmonster|\btentacle|\balien\b/i;
+  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i;
   var BANNED_CATEGORY_SLUGS = /* @__PURE__ */ new Set(["Yaoi"]);
   var BANNED_TAG_IDS = /* @__PURE__ */ new Set(["27"]);
   var NOT_SERIES = /* @__PURE__ */ new Set([
@@ -14922,7 +14922,7 @@ var _Sources = (() => {
     { id: "trending", label: "Trending", path: (page) => `/hentai-list/all/any/all/trending/${page}/` }
   ];
   var Hentai2ReadInfo = {
-    version: "1.4.1",
+    version: "1.4.2",
     name: "Hentai2Read (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",

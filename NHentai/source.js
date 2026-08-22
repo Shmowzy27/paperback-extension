@@ -765,8 +765,45 @@ var _Sources = (() => {
     { id: 31775, name: "tentacles" },
     { id: 17967, name: "alien" }
   ];
-  var NH_BANNED_NAMES_ONLY = ["mmmf", "older man younger woman", "old guy"];
+  var NH_BANNED_NAMES_ONLY = [
+    "mmmf",
+    "older man younger woman",
+    "old guy",
+    // multiple male-bodied participants
+    "mmm threesome",
+    "mmt threesome",
+    "mtf threesome",
+    "ttf threesome",
+    "ttm threesome",
+    "gang rape",
+    "gangbang",
+    "orgy",
+    // animals and creatures
+    "bestiality",
+    "low bestiality",
+    "furry",
+    "animal on animal",
+    "human on furry",
+    "octopus",
+    "slime",
+    "insect",
+    "snake",
+    "spider",
+    "worm",
+    "centaur",
+    "minotaur",
+    "horse",
+    "horse cock",
+    "dog",
+    "cat",
+    "pig",
+    "fish",
+    "frog",
+    "bear",
+    "wolf"
+  ];
   var ORIGINAL_PARODY_ID = 90671;
+  var PARODY_CATALOG_PAGES = 12;
   var BANNED_IDS = new Set(NH_BANNED.map((tag) => tag.id));
   var EXCLUSION = NH_BANNED.map((tag) => ` -tag:"${tag.name}"`).join("") + NH_BANNED_NAMES_ONLY.map((name) => ` -tag:"${name}"`).join("");
   var LANGUAGES = [
@@ -834,7 +871,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "2.0.1",
+    version: "2.0.2",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -892,6 +929,8 @@ var _Sources = (() => {
        * minutes so a refresh still sees new volumes.
        */
       this.memo = /* @__PURE__ */ new Map();
+      /** How many pages deep the parody catalog is warmed. See parodyIds. */
+      this.parodyPages = 0;
     }
     /**
      * A merged series has no page of its own on the site, so sharing one
@@ -963,7 +1002,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         }
       } catch {
       }
-      this.remember("tagmap", map, 36e5);
+      this.remember("tagmap", map, map.size > 0 ? 36e5 : 6e4);
       return map;
     }
     async fetchJson(url) {
@@ -998,27 +1037,41 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
     /**
      * The ids of the site's best-known parodies, minus its own "original".
      *
-     * A listing entry names none of its tags, only their ids, and the site
-     * holds 4,116 parodies -- far too many to enumerate against an allowance
-     * of ten requests a minute. So the popular hundred are fetched once and
-     * kept for an hour, which covers the parodies anyone is likely to meet in
-     * a listing. Anything rarer is still caught the moment the gallery is
-     * opened, where its tags arrive named.
+     * A listing entry names none of its tags, only their ids, so a parody can
+     * only be kept out of a listing if its id is known. The site holds 4,116
+     * of them across 37 pages, which cannot be fetched at once against an
+     * allowance of about ten requests a minute -- so the catalog is warmed one
+     * page per listing fetch and kept for an hour.
+     *
+     * The depth is chosen from the site's own numbers: page 1 stops at
+     * parodies with 424 galleries, which let a current-season anime parody sit
+     * unfiltered on page 7. Twelve pages reach down to roughly twenty
+     * galleries apiece, which covers the parodies a listing actually surfaces.
+     * Rarer ones are still caught the moment the gallery is opened, where its
+     * tags arrive named.
+     *
+     * Only listings warm the catalog. Opening a gallery must not, or the
+     * no-request open -- the thing that makes this source usable at seven
+     * seconds a request -- would cost a request again.
      */
-    async parodyIds() {
+    async parodyIds(warm = false) {
       const cached = this.remembered("parodyids");
-      if (cached != void 0) return cached;
-      const ids = /* @__PURE__ */ new Set();
+      if (cached == void 0) this.parodyPages = 0;
+      if (cached != void 0 && (!warm || this.parodyPages >= PARODY_CATALOG_PAGES)) return cached;
+      const ids = cached ?? /* @__PURE__ */ new Set();
       try {
+        const page = this.parodyPages + 1;
         const data = await this.fetchJson(
-          `${NH_API}/tags/parody?sort=popular&per_page=100`
+          `${NH_API}/tags/parody?sort=popular&per_page=100&page=${page}`
         );
-        for (const parody of data.result ?? []) {
+        const result = data.result ?? [];
+        for (const parody of result) {
           if (parody.id != void 0 && parody.id !== ORIGINAL_PARODY_ID) ids.add(parody.id);
         }
+        if (result.length > 0) this.parodyPages = page;
       } catch {
       }
-      this.remember("parodyids", ids, 36e5);
+      this.remember("parodyids", ids, ids.size > 0 ? 36e5 : 6e4);
       return ids;
     }
     /**
@@ -1090,7 +1143,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
     async pagedSearch(query, sort, page, seen) {
       const data = await this.fetchJson(this.searchUrl(query, sort, page));
       const entries = data.result ?? [];
-      const tiles = this.tilesFrom(entries, seen, await this.parodyIds());
+      const tiles = this.tilesFrom(entries, seen, await this.parodyIds(true));
       const lastPage = page >= (data.num_pages ?? 1) || entries.length === 0;
       return App.createPagedResults({
         results: tiles,

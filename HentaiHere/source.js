@@ -14891,7 +14891,7 @@ var _Sources = (() => {
   var HH_DOMAIN = "https://hentaihere.com";
   var HH_CDN = "https://hentaicdn.com/hentai";
   var BANNED_TAG_ID = "27";
-  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bmm+f\b|\bmonster|\btentacle|\balien\b/i;
+  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i;
   var SEARCH_SUFFIX = " -yaoi";
   var SECTIONS = [
     { id: "newest", label: "Newest (Filtered)", sort: "newest" },
@@ -14899,7 +14899,7 @@ var _Sources = (() => {
     { id: "last-updated", label: "Last Updated (Filtered)", sort: "last-updated" }
   ];
   var HentaiHereInfo = {
-    version: "1.4.1",
+    version: "1.4.2",
     name: "HentaiHere (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",

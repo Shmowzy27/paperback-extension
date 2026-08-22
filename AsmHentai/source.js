@@ -14893,8 +14893,69 @@ var _Sources = (() => {
 
   // src/AsmHentai/AsmHentai.ts
   var ASM_DOMAIN = "https://asmhentai.com";
-  var BANNED_TAG_IDS = /* @__PURE__ */ new Set(["13", "32", "88", "87", "534"]);
-  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bmm+f\b|\bmonster|\btentacle|\balien\b/i;
+  var BANNED_TAG_IDS = /* @__PURE__ */ new Set([
+    "8",
+    "13",
+    "24",
+    "84",
+    "87",
+    "88",
+    "102",
+    "104",
+    "105",
+    "106",
+    "117",
+    "118",
+    "122",
+    "143",
+    "151",
+    "178",
+    "215",
+    "218",
+    "270",
+    "297",
+    "302",
+    "309",
+    "311",
+    "339",
+    "343",
+    "344",
+    "353",
+    "369",
+    "371",
+    "376",
+    "377",
+    "379",
+    "380",
+    "398",
+    "405",
+    "406",
+    "417",
+    "418",
+    "441",
+    "442",
+    "445",
+    "454",
+    "460",
+    "493",
+    "534",
+    "548",
+    "560",
+    "563",
+    "581",
+    "660",
+    "1153",
+    "1225",
+    "1296",
+    "1469",
+    "1580",
+    "3513",
+    "5478",
+    "7381",
+    "8220",
+    "8224"
+  ]);
+  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i;
   var ORIGINAL_PARODY_ID = "2721";
   var MIN_CATALOG_GALLERIES = 50;
   var ENGLISH_LANGUAGE_ID = "1";
@@ -14952,7 +15013,7 @@ var _Sources = (() => {
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
   var AsmHentaiInfo = {
-    version: "1.3.1",
+    version: "1.4.0",
     name: "AsmHentai (English)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15379,6 +15440,10 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
         pages
       });
     }
+    searchUrl(title, page) {
+      const query = `${ASM_DOMAIN}/search/?q=${encodeURIComponent(title)}`;
+      return page <= 1 ? query : `${query}&page=${page}`;
+    }
     async getSearchResults(query, metadata) {
       const page = metadata?.page ?? 1;
       const seen = new Set(metadata?.seen ?? []);
@@ -15386,13 +15451,22 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
       const selected = (query.includedTags ?? [])[0]?.id;
       if (title.length > 0) {
         const filters3 = await this.resolveFilters(query, false);
-        const $2 = await this.loadPage(
-          page <= 1 ? `${ASM_DOMAIN}/search/?q=${encodeURIComponent(title)}` : `${ASM_DOMAIN}/search/?q=${encodeURIComponent(title)}&page=${page}`
-        );
-        const tiles = this.tilesFrom(this.parseCards($2).filter((row) => this.matches(row, filters3)), seen);
+        const tiles = [];
+        let current = page;
+        let exhausted = false;
+        for (let hop = 0; hop < 5; hop++) {
+          const $2 = await this.loadPage(this.searchUrl(title, current));
+          if ($2("div.preview_item").length === 0) {
+            exhausted = true;
+            break;
+          }
+          tiles.push(...this.tilesFrom(this.parseCards($2).filter((row) => this.matches(row, filters3)), seen));
+          current++;
+          if (tiles.length >= 10) break;
+        }
         return App.createPagedResults({
           results: tiles,
-          metadata: $2("div.preview_item").length === 0 ? void 0 : { page: page + 1, seen: Array.from(seen) }
+          metadata: exhausted ? void 0 : { page: current, seen: Array.from(seen) }
         });
       }
       const typed = /^([a-z]+):(.+)$/.exec(selected ?? "");
