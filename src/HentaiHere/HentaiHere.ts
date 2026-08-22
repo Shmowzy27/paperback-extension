@@ -68,7 +68,7 @@ interface ListingMetadata {
  * engine's own minus operator instead, and the details gate backstops both.
  */
 export const HentaiHereInfo: SourceInfo = {
-    version: '1.2.0',
+    version: '1.3.0',
     name: 'HentaiHere (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -405,6 +405,7 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
                 }
 
                 if (tags.length > 0) {
+                    tags.sort((a, b) => a.label.localeCompare(b.label))
                     sections.push(App.createTagSection({ id: path, label: label, tags: tags }))
                 }
             } catch {

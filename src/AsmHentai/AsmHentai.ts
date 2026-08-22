@@ -66,14 +66,23 @@ const SECTIONS: { id: string; label: string; path: string }[] = [
 ]
 
 /**
- * Browsable catalogs, the way the sibling sources offer theirs. Each index
- * lists the site's most popular hundred-odd of that type.
+ * Browsable catalogs. The bare index of each type lists only the hundred-odd
+ * most popular, which left most of the site's 8,232 tags unreachable, so tags
+ * are gathered a letter at a time instead -- `/tags/a/` and so on, plus a
+ * `num` bucket for the ones that start with a digit.
+ *
+ * Only tags are gathered that thoroughly. Parodies are not offered at all: the
+ * catalog ran to 2,470 entries and cost half the requests of the whole filter
+ * screen, for a list nobody filters by. Artists stay on their popular index --
+ * there are 30,827 of them, which is neither quick to gather nor useful as a
+ * list. Both still appear on a gallery's own details page.
  */
-const TAG_TYPES: { type: string; path: string; label: string }[] = [
-    { type: 'tag', path: '/tags/', label: 'Tags' },
-    { type: 'artist', path: '/artists/', label: 'Artists' },
-    { type: 'parody', path: '/parodies/', label: 'Parodies' }
+const TAG_TYPES: { type: string; path: string; label: string; byLetter: boolean }[] = [
+    { type: 'tag', path: '/tags/', label: 'Tags', byLetter: true },
+    { type: 'artist', path: '/artists/', label: 'Artists', byLetter: false }
 ]
+
+const CATALOG_LETTERS = 'abcdefghijklmnopqrstuvwxyz'.split('').concat(['num'])
 
 /**
  * Galleries here are flat -- a multi-volume work is published as several
@@ -177,7 +186,7 @@ interface CardRow {
  * English are dropped the same way, on the cards' language ids.
  */
 export const AsmHentaiInfo: SourceInfo = {
-    version: '1.1.0',
+    version: '1.2.0',
     name: 'AsmHentai (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -252,6 +261,28 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
         if (status < 200 || status >= 300) {
             throw new Error(`Unexpected response from the site (HTTP ${status}).`)
         }
+    }
+
+    /**
+     * Short-lived memo for things worth not fetching twice -- chiefly the tag
+     * catalogs, which cost a request per letter to gather.
+     */
+    private memo = new Map<string, { at: number; value: unknown; ttl: number }>()
+
+    private remembered<T>(key: string): T | undefined {
+        const entry = this.memo.get(key)
+        if (entry == undefined) return undefined
+
+        if (Date.now() - entry.at > entry.ttl) {
+            this.memo.delete(key)
+            return undefined
+        }
+        return entry.value as T
+    }
+
+    private remember(key: string, value: unknown, ttl: number = 120000): void {
+        if (this.memo.size > 40) this.memo.clear()
+        this.memo.set(key, { at: Date.now(), value: value, ttl: ttl })
     }
 
     private async fetchHtml(url: string): Promise<string> {
@@ -723,33 +754,72 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
      * matching the standing exclusions scrubbed from the offer -- advertising
      * a filter that cannot return anything is worse than not offering it.
      */
+    /** Reads one index page into a slug/name map, banned names dropped. */
+    private collectCatalog($: CheerioAPI, type: string, into: Map<string, string>): number {
+        let added = 0
+
+        for (const element of $(`a[href^="/${type}/"]`).toArray()) {
+            const slug = new RegExp(`^/${type}/([^/"]+)/`).exec($(element).attr('href') ?? '')?.[1]
+            const name = $(element).text().replace(/\s*\([\d,]+\)\s*$/, '').replace(/\s+/g, ' ').trim()
+            if (slug == undefined || name.length === 0 || into.has(slug)) continue
+            if (BANNED_LABELS.test(name) || BANNED_LABELS.test(slug.replace(/-/g, ' '))) continue
+
+            into.set(slug, name)
+            added++
+        }
+
+        return added
+    }
+
+    /**
+     * The catalogs, remembered for a day: they change slowly, and gathering
+     * them is the most expensive thing this source does.
+     *
+     * A bare index only ever returns the hundred-odd most popular of its type,
+     * which is what left most of the site's tags unreachable. Tags and parodies
+     * are therefore walked a letter at a time, which is the only way the site
+     * offers to see past that cap. Each letter is one request; the deeper
+     * `?page=` runs behind each letter exist but are not followed, since that
+     * would turn opening the filter screen into eighty-odd requests.
+     *
+     * Everything is sorted by name, so the list reads alphabetically rather
+     * than by popularity.
+     */
     async getSearchTags(): Promise<TagSection[]> {
+        const cached = this.remembered<TagSection[]>('catalogs')
+        if (cached != undefined) return cached
+
         const sections: TagSection[] = []
 
         for (const entry of TAG_TYPES) {
+            const found = new Map<string, string>()
+
             try {
-                const $ = await this.loadPage(`${ASM_DOMAIN}${entry.path}`)
+                this.collectCatalog(await this.loadPage(`${ASM_DOMAIN}${entry.path}`), entry.type, found)
 
-                const tags: Tag[] = []
-                const seen = new Set<string>()
-                for (const element of $(`a[href^="/${entry.type}/"]`).toArray()) {
-                    const slug = new RegExp(`^/${entry.type}/([^/"]+)/`).exec($(element).attr('href') ?? '')?.[1]
-                    const name = $(element).text().replace(/\s*\([\d,]+\)\s*$/, '').replace(/\s+/g, ' ').trim()
-                    if (slug == undefined || name.length === 0 || seen.has(slug)) continue
-                    if (BANNED_LABELS.test(name) || BANNED_LABELS.test(slug.replace(/-/g, ' '))) continue
-
-                    seen.add(slug)
-                    tags.push(App.createTag({ id: `${entry.type}:${slug}`, label: name }))
-                }
-
-                if (tags.length > 0) {
-                    sections.push(App.createTagSection({ id: entry.type, label: entry.label, tags: tags }))
+                if (entry.byLetter) {
+                    for (const letter of CATALOG_LETTERS) {
+                        try {
+                            this.collectCatalog(await this.loadPage(`${ASM_DOMAIN}${entry.path}${letter}/`), entry.type, found)
+                        } catch {
+                            // One missing letter is not worth losing the rest.
+                        }
+                    }
                 }
             } catch {
                 // A failed index leaves the other sections in place.
             }
+
+            if (found.size === 0) continue
+
+            const tags = [...found.entries()]
+                .sort((a, b) => a[1].localeCompare(b[1]))
+                .map((pair) => App.createTag({ id: `${entry.type}:${pair[0]}`, label: pair[1] }))
+
+            sections.push(App.createTagSection({ id: entry.type, label: entry.label, tags: tags }))
         }
 
+        if (sections.length > 0) this.remember('catalogs', sections, 86400000)
         return sections
     }
 

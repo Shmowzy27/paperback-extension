@@ -49,7 +49,7 @@ import {
  * manhwa, manhua and webtoon all qualify so long as the genres do.
  */
 export const MangaKatanaInfo: SourceInfo = {
-    version: '1.2.0',
+    version: '1.3.0',
     name: 'MangaKatana (18+)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -272,6 +272,7 @@ export class MangaKatana implements SearchResultsProviding, MangaProviding, Chap
             const genres = parseGenreCatalog(await this.loadPage(`${MK_DOMAIN}/manga/?filter=1`))
             catalog = genres
                 .filter((genre) => !banned.has(genre.slug) && !wanted.has(genre.slug))
+                .sort((a, b) => a.label.localeCompare(b.label))
                 .map((genre) => App.createTag({ id: genre.slug, label: genre.label }))
         } catch {
             // Leaves the 18+ genres as the whole offer.

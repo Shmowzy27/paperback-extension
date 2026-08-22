@@ -47,7 +47,7 @@ import {
  * resolve, so the existing library keeps working.
  */
 export const FullManhwaInfo: SourceInfo = {
-    version: '2.2.0',
+    version: '2.3.0',
     name: 'SayManhwa',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -323,7 +323,9 @@ export class FullManhwa implements SearchResultsProviding, MangaProviding, Chapt
                 sections.push(App.createTagSection({
                     id: 'genre',
                     label: 'Genre',
-                    tags: genres.map((genre) => App.createTag({ id: genre.id, label: genre.label }))
+                    tags: genres
+                        .sort((a, b) => a.label.localeCompare(b.label))
+                        .map((genre) => App.createTag({ id: genre.id, label: genre.label }))
                 }))
             }
         } catch {

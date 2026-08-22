@@ -83,7 +83,7 @@ interface ListingMetadata {
  * read or land in the library.
  */
 export const Hentai2ReadInfo: SourceInfo = {
-    version: '1.2.0',
+    version: '1.3.0',
     name: 'Hentai2Read (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -496,6 +496,8 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
             seen.add(slug)
             tags.push(App.createTag({ id: `cat:${decodeURIComponent(slug)}`, label: label }))
         }
+
+        tags.sort((a, b) => a.label.localeCompare(b.label))
 
         return tags.length > 0
             ? [App.createTagSection({ id: 'category', label: 'Categories', tags: tags })]

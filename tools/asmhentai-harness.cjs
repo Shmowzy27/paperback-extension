@@ -170,13 +170,21 @@ const expectGateThrow = async (label, fn) => {
     // ---- tag catalogs ----
     const tags = await s.getSearchTags()
     const offered = tags.flatMap((sec) => sec.tags.map((t) => t.label.toLowerCase()))
-    check('tag catalogs offered', tags.length === 3 && tags.every((sec) => sec.tags.length > 20),
+    check('tag catalogs offered', tags.length === 2 && tags.every((sec) => sec.tags.length > 20),
         tags.map((sec) => `${sec.id}:${sec.tags.length}`).join(' '))
+    check('catalogs are alphabetical',
+        tags.every((sec) => {
+            const labels = sec.tags.map((t) => t.label)
+            return JSON.stringify(labels) === JSON.stringify([...labels].sort((a, b) => a.localeCompare(b)))
+        }),
+        tags.map((sec) => `${sec.id}: ${sec.tags[0]?.label}`).join(' | '))
     check('banned names scrubbed from the catalogs',
         !offered.some((l) => /yaoi|males only|tomgirl|crossdress|ugly bastard|^bald$/i.test(l)),
         `${offered.length} names offered, none banned`)
 
-    const browsable = tags[0]?.tags[0]
+    // A populated tag, not simply the alphabetically first: the catalog now
+    // leads with oddities like ".labo", whose page the site redirects away.
+    const browsable = tags[0]?.tags.find((t) => t.label === 'big breasts') ?? tags[0]?.tags[0]
     const byTag = await s.getSearchResults({ title: '', includedTags: [browsable], excludedTags: [], parameters: {} }, undefined)
     check('selecting a catalog tag browses it', byTag.results.length > 0,
         `${browsable?.id} -> ${byTag.results.length} results`)

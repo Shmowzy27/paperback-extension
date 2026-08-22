@@ -240,7 +240,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '1.8.0',
+    version: '1.9.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -827,6 +827,9 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                         seen.add(name)
                         tags.push({ id: `${entry.type}:${name}`, label: name })
                     }
+                    // Alphabetical, so the list reads by name rather than by
+                    // the popularity the API returns it in.
+                    tags.sort((a, b) => a.label.localeCompare(b.label))
                     this.remember(key, tags, 3600000)
                 } catch {
                     // Leaves the sections gathered so far in place.
