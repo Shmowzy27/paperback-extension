@@ -66,13 +66,26 @@ export const NH_BANNED: { id: number; name: string }[] = [
  * against, because the site has no such tag to resolve one from. Harmless to
  * ask for: the API simply matches nothing.
  */
-const NH_BANNED_NAMES_ONLY = ['mmmf', 'older man younger woman', 'old guy']
+const NH_BANNED_NAMES_ONLY = [
+    'mmmf', 'older man younger woman', 'old guy',
+    // multiple male-bodied participants
+    'mmm threesome', 'mmt threesome', 'mtf threesome', 'ttf threesome',
+    'ttm threesome', 'gang rape', 'gangbang', 'orgy',
+    // animals and creatures
+    'bestiality', 'low bestiality', 'furry', 'animal on animal',
+    'human on furry', 'octopus', 'slime', 'insect', 'snake', 'spider',
+    'worm', 'centaur', 'minotaur', 'horse', 'horse cock', 'dog', 'cat',
+    'pig', 'fish', 'frog', 'bear', 'wolf'
+]
 
 /**
  * Anime and game parodies are excluded, leaving original works. Anything the
  * site files under a parody other than its own "original" is refused.
  */
 const ORIGINAL_PARODY_ID = 90671
+
+/** Pages of the parody catalog warmed while browsing. See parodyIds. */
+const PARODY_CATALOG_PAGES = 12
 
 const BANNED_IDS = new Set(NH_BANNED.map((tag) => tag.id))
 
@@ -270,7 +283,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '2.0.1',
+    version: '2.0.2',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -415,7 +428,10 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             // An empty map just means fewer tags on the details page.
         }
 
-        this.remember('tagmap', map, 3600000)
+        // Kept only briefly when it came back empty. Remembering a failed
+        // fetch for the hour a good one gets is why a rate-limited moment
+        // could leave every gallery showing no tags at all.
+        this.remember('tagmap', map, map.size > 0 ? 3600000 : 60000)
         return map
     }
 
@@ -456,33 +472,56 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         return parodies == undefined || !ids.some((id) => parodies.has(id))
     }
 
+    /** How many pages deep the parody catalog is warmed. See parodyIds. */
+    private parodyPages = 0
+
     /**
      * The ids of the site's best-known parodies, minus its own "original".
      *
-     * A listing entry names none of its tags, only their ids, and the site
-     * holds 4,116 parodies -- far too many to enumerate against an allowance
-     * of ten requests a minute. So the popular hundred are fetched once and
-     * kept for an hour, which covers the parodies anyone is likely to meet in
-     * a listing. Anything rarer is still caught the moment the gallery is
-     * opened, where its tags arrive named.
+     * A listing entry names none of its tags, only their ids, so a parody can
+     * only be kept out of a listing if its id is known. The site holds 4,116
+     * of them across 37 pages, which cannot be fetched at once against an
+     * allowance of about ten requests a minute -- so the catalog is warmed one
+     * page per listing fetch and kept for an hour.
+     *
+     * The depth is chosen from the site's own numbers: page 1 stops at
+     * parodies with 424 galleries, which let a current-season anime parody sit
+     * unfiltered on page 7. Twelve pages reach down to roughly twenty
+     * galleries apiece, which covers the parodies a listing actually surfaces.
+     * Rarer ones are still caught the moment the gallery is opened, where its
+     * tags arrive named.
+     *
+     * Only listings warm the catalog. Opening a gallery must not, or the
+     * no-request open -- the thing that makes this source usable at seven
+     * seconds a request -- would cost a request again.
      */
-    private async parodyIds(): Promise<Set<number>> {
+    private async parodyIds(warm: boolean = false): Promise<Set<number>> {
         const cached = this.remembered<Set<number>>('parodyids')
-        if (cached != undefined) return cached
 
-        const ids = new Set<number>()
+        // The hour is up: the pages have to be gathered again, so the depth
+        // counter starts over with them.
+        if (cached == undefined) this.parodyPages = 0
+        if (cached != undefined && (!warm || this.parodyPages >= PARODY_CATALOG_PAGES)) return cached
+
+        const ids = cached ?? new Set<number>()
         try {
+            const page = this.parodyPages + 1
             const data = await this.fetchJson<{ result?: { id?: number }[] }>(
-                `${NH_API}/tags/parody?sort=popular&per_page=100`
+                `${NH_API}/tags/parody?sort=popular&per_page=100&page=${page}`
             )
-            for (const parody of data.result ?? []) {
+            const result = data.result ?? []
+            for (const parody of result) {
                 if (parody.id != undefined && parody.id !== ORIGINAL_PARODY_ID) ids.add(parody.id)
             }
+            if (result.length > 0) this.parodyPages = page
         } catch {
             // An empty set simply leaves the details gate to do the work.
         }
 
-        this.remember('parodyids', ids, 3600000)
+        // A fetch that failed is not remembered for the hour a good one is:
+        // a single rate-limited request would otherwise leave listings
+        // unfiltered until it expired.
+        this.remember('parodyids', ids, ids.size > 0 ? 3600000 : 60000)
         return ids
     }
 
@@ -584,7 +623,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         const data = await this.fetchJson<{ result?: ApiListing[]; num_pages?: number }>(this.searchUrl(query, sort, page))
 
         const entries = data.result ?? []
-        const tiles = this.tilesFrom(entries, seen, await this.parodyIds())
+        const tiles = this.tilesFrom(entries, seen, await this.parodyIds(true))
         const lastPage = page >= (data.num_pages ?? 1) || entries.length === 0
 
         return App.createPagedResults({

@@ -38,8 +38,38 @@ export const ASM_DOMAIN = 'https://asmhentai.com'
  * and `ugly bastard` has too few galleries to resolve that way, so the label
  * gate on the details page covers those.
  */
-const BANNED_TAG_IDS = new Set(['13', '32', '88', '87', '534'])
-const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|males only|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bmm+f\b|\bmonster|\btentacle|\balien\b/i
+/**
+ * Every banned tag's numeric id, resolved from the site's own listings -- the
+ * id carried by every card under that tag.
+ *
+ * The list has to be this complete. Cards annotate themselves with ids only,
+ * so a name the gate refuses but the card filter does not know is a gallery
+ * that shows in a listing and then errors when opened. That is exactly what
+ * happened when the names grew and this set stayed at five.
+ *
+ * `32` (males only) is absent on purpose: the site has no such tag, and the
+ * name matched "females only" until the pattern below was anchored.
+ */
+const BANNED_TAG_IDS = new Set([
+    '8', '13', '24', '84', '87', '88', '102', '104', '105', '106',
+    '117', '118', '122', '143', '151', '178', '215', '218', '270', '297',
+    '302', '309', '311', '339', '343', '344', '353', '369', '371', '376',
+    '377', '379', '380', '398', '405', '406', '417', '418', '441', '442',
+    '445', '454', '460', '493', '534', '548', '560', '563', '581', '660',
+    '1153', '1225', '1296', '1469', '1580', '3513', '5478', '7381', '8220', '8224'
+])
+
+/**
+ * The same rule by name, for a gallery's own tags and the offered catalog.
+ *
+ * `\bmales only\b` is anchored because "females only" contains it -- that one
+ * missing boundary was excluding female-only galleries, the opposite of what
+ * the rule is for.
+ *
+ * The threesome codes read as: two or more male-bodied participants, m or t,
+ * so mmf, mmm, mmt, mtf, ttf and ttm go while ffm and fff stay.
+ */
+const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i
 
 /**
  * Anime and game parodies are excluded, leaving original works. The site marks
@@ -203,7 +233,7 @@ interface CardRow {
  * English are dropped the same way, on the cards' language ids.
  */
 export const AsmHentaiInfo: SourceInfo = {
-    version: '1.3.1',
+    version: '1.4.0',
     name: 'AsmHentai (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -730,6 +760,11 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
         })
     }
 
+    private searchUrl(title: string, page: number): string {
+        const query = `${ASM_DOMAIN}/search/?q=${encodeURIComponent(title)}`
+        return page <= 1 ? query : `${query}&page=${page}`
+    }
+
     async getSearchResults(query: SearchRequest, metadata: ListingMetadata | undefined): Promise<PagedResults> {
         const page = metadata?.page ?? 1
         const seen = new Set(metadata?.seen ?? [])
@@ -743,16 +778,32 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
         // search itself takes no operators, so those are applied per card.
         if (title.length > 0) {
             const filters = await this.resolveFilters(query, false)
-            const $ = await this.loadPage(
-                page <= 1
-                    ? `${ASM_DOMAIN}/search/?q=${encodeURIComponent(title)}`
-                    : `${ASM_DOMAIN}/search/?q=${encodeURIComponent(title)}&page=${page}`
-            )
-            const tiles = this.tilesFrom(this.parseCards($).filter((row) => this.matches(row, filters)), seen)
+            const tiles: PartialSourceManga[] = []
+            let current = page
+            let exhausted = false
+
+            // Walked the way listings are, and for a sharper reason: the
+            // site's search cannot be told a language, so a page of twenty
+            // results is about five English galleries before the standing
+            // exclusions take their share of those. Reading a single page
+            // returned nothing at all for a term the site answers with 17,640
+            // galleries.
+            for (let hop = 0; hop < 5; hop++) {
+                const $ = await this.loadPage(this.searchUrl(title, current))
+
+                if ($('div.preview_item').length === 0) {
+                    exhausted = true
+                    break
+                }
+
+                tiles.push(...this.tilesFrom(this.parseCards($).filter((row) => this.matches(row, filters)), seen))
+                current++
+                if (tiles.length >= 10) break
+            }
 
             return App.createPagedResults({
                 results: tiles,
-                metadata: $('div.preview_item').length === 0 ? undefined : { page: page + 1, seen: Array.from(seen) }
+                metadata: exhausted ? undefined : { page: current, seen: Array.from(seen) }
             })
         }
 

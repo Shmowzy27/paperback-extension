@@ -24,8 +24,16 @@ const MUST_MATCH = [
     // the older-male category, which is what "old" was ever about
     'old man', 'old men', 'old guy', 'older man younger woman', 'older men',
     'grandfather', 'grandpa', 'granddad', 'grand-dad', 'gramps', 'dilf',
-    'group', 'group sex', 'bbm', 'mmf threesome', 'mmmf',
-    'monster', 'monster girl', 'tentacles', 'tentacle', 'alien'
+    'group', 'group sex', 'bbm', 'gang rape', 'gangbang', 'orgy',
+    // two or more male-bodied participants
+    'mmf threesome', 'mmm threesome', 'mmt threesome', 'mtf threesome',
+    'ttf threesome', 'ttm threesome', 'mmmf',
+    // animals and creatures
+    'monster', 'monster girl', 'tentacles', 'tentacle', 'alien', 'alien girl',
+    'bestiality', 'low bestiality', 'furry', 'animal on animal',
+    'human on furry', 'octopus', 'slime', 'slime girl', 'insect', 'snake',
+    'spider', 'worm', 'centaur', 'minotaur', 'horse', 'horse cock', 'dog',
+    'dog girl', 'cat', 'pig', 'fish', 'frog', 'bear', 'wolf', 'wolf girl'
 ]
 
 const MUST_NOT_MATCH = [
@@ -38,6 +46,12 @@ const MUST_NOT_MATCH = [
     'old lady', 'grandmother', 'granddaughter',
     // "grand" as an ordinary word, likewise real tags on asmhentai.
     'grand deer', 'grand plie',
+    // "females only" contains "males only". Missing that boundary once meant
+    // female-only galleries were excluded, the opposite of the rule's point.
+    'females only', 'sole female', 'female only',
+    // one male is not "multiple males", and animal *ears* are not an animal.
+    'ffm threesome', 'fff threesome', 'kemonomimi', 'kemonomimi | animal ears',
+    'catgirl', 'cat ears',
     // ordinary tags that must survive
     'big breasts', 'glasses', 'schoolgirl uniform', 'blowjob', 'stockings',
     'elf', 'sole female', 'nakadashi', 'ahegao', 'swimsuit', 'maid', 'nurse',

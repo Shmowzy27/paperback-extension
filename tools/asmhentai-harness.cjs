@@ -130,7 +130,7 @@ const expectGateThrow = async (label, fn) => {
         d.mangaInfo.titles[0]?.length > 0 && d.mangaInfo.image.startsWith('https://') && labels.length > 0,
         `"${d.mangaInfo.titles[0]?.slice(0, 40)}" tags=${labels.length}`)
     check('no banned label reaches the details screen',
-        !labels.some((l) => /yaoi|males only|tomgirl|crossdress|ugly bastard|^bald$|^fat$/i.test(l)),
+        !labels.some((l) => /yaoi|\bmales only\b|tomgirl|crossdress|ugly bastard|^bald$|^fat$/i.test(l)),
         labels.slice(0, 5).join(', ').slice(0, 70))
 
     const chapters = await s.getChapters(plain)
@@ -178,8 +178,11 @@ const expectGateThrow = async (label, fn) => {
             return JSON.stringify(labels) === JSON.stringify([...labels].sort((a, b) => a.localeCompare(b)))
         }),
         tags.map((sec) => `${sec.id}: ${sec.tags[0]?.label}`).join(' | '))
+    // "females only" contains "males only", so the boundary matters here as
+    // much as it does in the source: without it this check demands that the
+    // catalog drop female-only galleries, the opposite of the rule.
     check('banned names scrubbed from the catalogs',
-        !offered.some((l) => /yaoi|males only|tomgirl|crossdress|ugly bastard|^bald$/i.test(l)),
+        !offered.some((l) => /yaoi|\bmales only\b|tomgirl|crossdress|ugly bastard|^bald$/i.test(l)),
         `${offered.length} names offered, none banned`)
 
     // A populated tag, not simply the alphabetically first: the catalog now
