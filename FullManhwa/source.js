@@ -15108,7 +15108,7 @@ var _Sources = (() => {
 
   // src/FullManhwa/FullManhwa.ts
   var FullManhwaInfo = {
-    version: "2.4.0",
+    version: "2.4.1",
     name: "SayManhwa",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15124,10 +15124,16 @@ var _Sources = (() => {
     ],
     intents: import_types2.SourceIntents.MANGA_CHAPTERS | import_types2.SourceIntents.HOMEPAGE_SECTIONS | import_types2.SourceIntents.CLOUDFLARE_BYPASS_REQUIRED
   };
-  var FullManhwa = class {
+  var FullManhwa = class _FullManhwa {
     constructor() {
       this.requestManager = App.createRequestManager({
-        requestsPerSecond: 3,
+        // One a second, not three. The origin needs two to eight seconds to
+        // answer a series page, so three a second left twenty-odd requests in
+        // flight at once and the site began turning the whole device away with
+        // its own "Service temporarily unavailable" page -- which reads as a
+        // Cloudflare block in the app while the same pages load fine on a
+        // desktop. Refreshing a whole library is what tips it over.
+        requestsPerSecond: 1,
         // The sites answer slowly under the sustained load of a whole-library
         // refresh -- saymanhwa was measured at a 7s ninetieth percentile and a
         // 20s worst case -- so a thirty second ceiling turned slow-but-fine
@@ -15185,10 +15191,24 @@ var _Sources = (() => {
         }
       });
     }
-    checkCloudflare(status) {
-      if (status === 403 || status === 503) {
+    /**
+     * What a Cloudflare challenge page actually looks like. A 503 on its own is
+     * not one: the site answers a device it has decided is asking for too much
+     * with its own "Service temporarily unavailable" page, and calling that a
+     * Cloudflare block sends the reader to press the cloud icon, which cannot
+     * help -- the WebView it opens is turned away exactly the same way.
+     */
+    looksLikeChallenge(body) {
+      return /just a moment|cf-browser-verification|__cf_chl|cf_chl_opt|attention required|checking your browser/i.test(body);
+    }
+    checkResponse(status, body) {
+      if (status === 403 || status === 503 && this.looksLikeChallenge(body)) {
         throw new Error(`CLOUDFLARE BYPASS ERROR:
 Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`);
+      }
+      if (status === 503 || status === 429) {
+        throw new Error(`${FullManhwaInfo.name} is turning requests away right now (HTTP ${status}).
+The site limits how much one device may ask for at once, and refreshing a whole library will do it. Wait a few minutes and try again.`);
       }
       if (status >= 500) {
         throw new Error(`The site returned an error (HTTP ${status}). It is probably down or overloaded -- try again shortly.`);
@@ -15197,11 +15217,45 @@ Please go to the homepage of <${FullManhwaInfo.name}> and press the cloud icon.`
         throw new Error(`Unexpected response from the site (HTTP ${status}).`);
       }
     }
+    /**
+     * Waits, where the runtime has a timer to wait on. `setTimeout` is not part
+     * of the language and JavaScriptCore need not provide it, so its absence
+     * costs the backoff rather than throwing.
+     */
+    async pause(ms) {
+      const timer = globalThis.setTimeout;
+      if (typeof timer !== "function") return;
+      await new Promise((resolve) => timer(() => resolve(), ms));
+    }
+    static {
+      /**
+       * Retries a request the site turned away, backing off between attempts.
+       *
+       * The site answers a burst with its own 503 "Service temporarily
+       * unavailable" page and then keeps answering it for a minute or two --
+       * measured, along with series pages that take three to fourteen seconds
+       * and one that took seventy-eight. The response carries `retry-after: 1`,
+       * which is not true: retrying after a second was still refused. So the
+       * waits are seconds, not the one the site claims, and long enough that a
+       * blip is ridden out inside the one request the reader is waiting on.
+       */
+      this.BACKOFF_MS = [2e3, 6e3, 12e3];
+    }
     async fetch(url, headers) {
-      const request = App.createRequest({ url, method: "GET", headers });
-      const response = await this.requestManager.schedule(request, 3);
-      this.checkCloudflare(response.status);
-      return response;
+      let response;
+      for (let attempt = 0; attempt <= _FullManhwa.BACKOFF_MS.length; attempt++) {
+        const request = App.createRequest({ url, method: "GET", headers });
+        response = await this.requestManager.schedule(request, 3);
+        const body = response.data ?? "";
+        const turnedAway = response.status === 429 || response.status === 503 && !this.looksLikeChallenge(body);
+        if (!turnedAway) break;
+        const wait = _FullManhwa.BACKOFF_MS[attempt];
+        if (wait == void 0) break;
+        await this.pause(wait);
+      }
+      const settled = response;
+      this.checkResponse(settled.status, settled.data ?? "");
+      return settled;
     }
     async loadPage(url) {
       return load((await this.fetch(url)).data);
