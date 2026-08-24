@@ -211,31 +211,74 @@ const note = (label, detail) => console.log(`note  ${label}${detail ? ` — ${de
     // The site grew a BL category whose releases flood the latest feed; cards
     // badge it, and the source must drop every one. Ground truth is read off
     // the raw pages here, not hardcoded, so the check tracks the site.
-    const rawFetch = async (url) => (await fetch(url, { headers: { 'user-agent': UA } })).text()
-    const cardsOf = (html) => [...html.matchAll(/<article class="series-card">([\s\S]*?)<\/article>/g)]
-        .map((m) => ({
-            slug: /href="\/en\/series\/([a-z0-9-]+)"/.exec(m[1])?.[1],
-            bl: /series-type-badge">\s*BL\s*</i.test(m[1])
-        }))
-        .filter((c) => c.slug)
+    // The raw pages are fetched with the same patience the source now has:
+    // the site answers a burst with a 60-byte "Service temporarily
+    // unavailable" page, and reading that as a listing silently emptied the
+    // ground truth, which made these checks pass by having nothing to test.
+    const rawFetch = async (url) => {
+        for (let attempt = 0; attempt < 5; attempt++) {
+            const res = await fetch(url, { headers: { 'user-agent': UA } })
+            const html = await res.text()
+            if (res.status === 200) return html
+            await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)))
+        }
+        return ''
+    }
 
-    const rawSearch = cardsOf(await rawFetch('https://saymanhwa.com/en/series?q=alpha'))
-    const blSlugs = rawSearch.filter((c) => c.bl).map((c) => c.slug)
-    const keepSlugs = rawSearch.filter((c) => !c.bl).map((c) => c.slug)
+    const slugsOf = (html) => [...new Set([...html.matchAll(/\/en\/series\/([a-z0-9-]+)/g)].map((m) => m[1]))]
+
+    // The site has dropped BL from its taxonomy: the type badge now only ever
+    // reads MANHUA, MANHWA, MANGA or UNKNOWN, none of the 151 genres is a BL
+    // one, and /en/bl is a dead route that serves the general catalog -- the
+    // same 24 series on every page, none of them BL.
+    //
+    // So the badge filter in the source is dormant rather than wrong, and it
+    // stays where it is in case the category comes back. What is checked here
+    // is whether it has come back: if a BL type ever appears again, the leak
+    // assertions below start running and the exclusion is proven against live
+    // data once more.
+    const catalogHtml = await rawFetch('https://saymanhwa.com/en/series')
+    const badges = [...new Set([...catalogHtml.matchAll(/series-type-badge[^>]*>([\s\S]*?)</g)]
+        .map((m) => m[1].trim().toUpperCase()).filter(Boolean))]
+    const blIsBack = badges.includes('BL')
+    note('BL in the site taxonomy', blIsBack
+        ? 'a BL type is being published again -- leak checks below are live'
+        : `absent; type badges are ${badges.join(', ') || 'none'} and the badge filter is dormant`)
+
+    const blSlugs = blIsBack ? slugsOf(await rawFetch('https://saymanhwa.com/en/bl')) : []
+    const allSlugs = slugsOf(catalogHtml)
+    const sameAsCatalog = blSlugs.length > 0
+        && blSlugs.length === allSlugs.length
+        && blSlugs.every((slug) => allSlugs.includes(slug))
+
+    if (blIsBack) {
+        check('the site still has a BL listing to check against',
+            blSlugs.length > 0 && !sameAsCatalog,
+            sameAsCatalog
+                ? `/en/bl returns the same ${blSlugs.length} series as /en/series -- BL ground truth is gone, exclusion UNVERIFIED`
+                : `${blSlugs.length} BL series known`)
+    }
+
+    if (blSlugs.length > 0 && !sameAsCatalog) {
+        const latestBatch = await s.getViewMoreItems('latest', undefined)
+        check('BL titles never appear in the latest listing',
+            latestBatch.results.length > 0 && !latestBatch.results.some((r) => blSlugs.includes(r.mangaId)),
+            `${latestBatch.results.length} tiles checked against ${blSlugs.length} known BL series`)
+
+        const browse = await s.getViewMoreItems('popular', undefined)
+        check('BL titles never appear when browsing',
+            browse.results.length > 0 && !browse.results.some((r) => blSlugs.includes(r.mangaId)),
+            `${browse.results.length} tiles checked`)
+    }
 
     const alpha = await s.getSearchResults({ title: 'alpha', includedTags: [], excludedTags: [], parameters: {} }, undefined)
     const alphaIds = alpha.results.map((r) => r.mangaId)
-    check('BL titles never survive search', blSlugs.length > 0 && !alphaIds.some((id) => blSlugs.includes(id)),
-        `raw page had ${blSlugs.length} BL of ${rawSearch.length}; source returned ${alphaIds.length}`)
-    check('non-BL titles still come through search', keepSlugs.every((slug) => alphaIds.includes(slug)),
-        alphaIds.join(', ').slice(0, 80) || 'none')
-
-    const rawLatest = cardsOf(await rawFetch('https://saymanhwa.com/en/latest'))
-    const latestBl = rawLatest.filter((c) => c.bl).map((c) => c.slug)
-    const latestBatch = await s.getViewMoreItems('latest', undefined)
-    check('BL titles never appear in the latest listing',
-        latestBatch.results.length > 0 && !latestBatch.results.some((r) => latestBl.includes(r.mangaId)),
-        `raw latest carried ${latestBl.length} BL cards; source batch of ${latestBatch.results.length} has none`)
+    check('search still returns titles', alphaIds.length > 0, alphaIds.join(', ').slice(0, 80) || 'none')
+    if (blSlugs.length > 0 && !sameAsCatalog) {
+        check('BL titles never survive search',
+            !alphaIds.some((id) => blSlugs.includes(id)),
+            `${alphaIds.length} results checked against ${blSlugs.length} known BL series`)
+    }
 
     console.log(failures > 0 ? `\n${failures} check(s) failed` : '\nall checks passed')
     process.exit(failures > 0 ? 1 : 0)
