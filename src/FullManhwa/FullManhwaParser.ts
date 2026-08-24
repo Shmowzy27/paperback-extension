@@ -53,15 +53,30 @@ export const SM_ORIGINS: { id: string; label: string }[] = [
 export const SM_HIDDEN_COOKIE = 'say_catalog_hidden_series=%5B%22bl%22%5D; say_catalog_hidden_latest=%5B%22bl%22%5D'
 
 /**
- * Genres kept out of the offered filter list, by standing request.
+ * Genres excluded by standing request, as this site's own taxonomy spells
+ * them. It is a manhwa catalogue rather than a doujinshi one, so most of the
+ * shared blocklist has no genre here to catch: there is no BL, yaoi or
+ * shounen-ai genre among its 151, and the type badge no longer offers BL
+ * either.
  *
- * Only the offer is scrubbed here, not the listings: this site's cards carry
- * no genre information at all, so filtering content by genre would mean
- * fetching every title's own page. The site is manhwa rather than doujinshi,
- * so the shared exclusion list barely touches it -- monster is the only genre
- * it has in common.
+ * `yuri` is deliberately absent -- the standing exclusion is male-to-male.
  */
-const SM_BANNED_GENRES = /\bmonster/i
+export const SM_BANNED_GENRE_SLUGS = [
+    'aliens',
+    'animals',
+    'crossdressing',
+    'gender-bender',
+    'genderswap',
+    'monster',
+    'monsters',
+    'monsters-action'
+]
+
+/**
+ * The same rule by name, for scrubbing the offered list and for reading a
+ * series' own genres back off its page.
+ */
+const SM_BANNED_GENRES = /\bmonsters?\b|\baliens?\b|\banimals?\b|crossdress|gender[- ]?bender|genderswap|\byaoi\b|boys?.?love|shounen[ -]?ai/i
 
 /** Genre ids are namespaced so routeFor can tell them from sections/origins. */
 export const SM_GENRE_PREFIX = 'genre:'
@@ -117,6 +132,28 @@ export interface TileRow {
  * stub the App factories as identity functions, so a field read back off a
  * created object round-trips off-device and silently fails on the phone.
  */
+/**
+ * The excluded genre a series page carries, if it carries one.
+ *
+ * Read straight off the page rather than out of the tags parseMangaDetails
+ * builds: on the device the app's factories hand back opaque objects, so a
+ * field read back off one is not the value that went in -- a mistake this
+ * repo has made before and does not intend to make again.
+ */
+export const bannedGenreOn = ($: CheerioAPI): string | undefined => {
+    for (const element of $('.series-v72-genres a, a[href*="/genres/"]').toArray()) {
+        const slug = /\/genres\/([^/?#]+)\/?$/.exec($(element).attr('href') ?? '')?.[1] ?? ''
+        const label = $(element).text().trim()
+
+        if (slug.length > 0 && SM_BANNED_GENRE_SLUGS.indexOf(slug) >= 0) {
+            return label.length > 0 ? label : slug
+        }
+        if (label.length > 0 && SM_BANNED_GENRES.test(label)) return label
+    }
+
+    return undefined
+}
+
 export const parseTiles = ($: CheerioAPI): TileRow[] => {
     const rows: TileRow[] = []
     const seen = new Set<string>()

@@ -189,6 +189,59 @@ const note = (label, detail) => console.log(`note  ${label}${detail ? ` — ${de
     check('genre taxonomy discovered', (genre?.tags.length ?? 0) > 10,
         `${genre?.tags.length ?? 0} genres, e.g. ${(genre?.tags ?? []).slice(0, 3).map((t) => t.id).join(',')}`)
 
+    const offeredGenres = (genre?.tags ?? []).map((t) => t.id.replace(/^genre:/, ''))
+    check('genres are offered alphabetically',
+        JSON.stringify((genre?.tags ?? []).map((t) => t.label))
+            === JSON.stringify((genre?.tags ?? []).map((t) => t.label).sort((a, b) => a.localeCompare(b))),
+        `first: ${(genre?.tags ?? [])[0]?.label}`)
+
+    // The site's own genre list, so the scrub is measured against what it
+    // actually publishes rather than against a copy that can go stale.
+    const BANNED_GENRES = ['aliens', 'animals', 'crossdressing', 'gender-bender', 'genderswap', 'monster', 'monsters', 'monsters-action']
+    const catalogGenres = [...new Set([...(await (await fetch('https://saymanhwa.com/en/series', { headers: { 'user-agent': UA } })).text())
+        .matchAll(/<option value="([a-z0-9-]+)"/g)].map((m) => m[1]))]
+    const bannedOnSite = BANNED_GENRES.filter((g) => catalogGenres.includes(g))
+
+    check('the excluded genres still exist on the site to be excluded',
+        bannedOnSite.length > 0, `${bannedOnSite.length} of ${BANNED_GENRES.length} present: ${bannedOnSite.join(', ')}`)
+    check('no excluded genre is offered in the filter',
+        !offeredGenres.some((g) => BANNED_GENRES.includes(g)),
+        offeredGenres.filter((g) => BANNED_GENRES.includes(g)).join(', ') || `${offeredGenres.length} genres offered, none banned`)
+
+    check('tag exclusion is claimed', await s.supportsTagExclusion(), 'supportsTagExclusion() is true')
+
+    // A title from an excluded genre must not open. Ground truth is the site's
+    // own listing for that genre.
+    if (bannedOnSite.length > 0) {
+        const html = await (await fetch(`https://saymanhwa.com/en/genres/${bannedOnSite[0]}`, { headers: { 'user-agent': UA } })).text()
+        const victim = (/\/en\/series\/([a-z0-9-]+)/.exec(html) ?? [])[1]
+        if (victim) {
+            try {
+                await s.getMangaDetails(victim)
+                check(`a "${bannedOnSite[0]}" title refuses to open (${victim.slice(0, 30)})`, false, 'it opened instead')
+            } catch (error) {
+                check(`a "${bannedOnSite[0]}" title refuses to open (${victim.slice(0, 30)})`,
+                    /your settings exclude/i.test(error.message), error.message.slice(0, 80))
+            }
+        } else {
+            note('no title found under the excluded genre to test the gate with')
+        }
+    }
+
+    // Excluding a genre must drop that genre's series from a listing.
+    if (offeredGenres.length > 0) {
+        const target = offeredGenres.includes('yuri') ? 'yuri' : offeredGenres[0]
+        const rawHtml = await (await fetch(`https://saymanhwa.com/en/genres/${target}`, { headers: { 'user-agent': UA } })).text()
+        const members = [...new Set([...rawHtml.matchAll(/\/en\/series\/([a-z0-9-]+)/g)].map((m) => m[1]))]
+
+        const withExclusion = await s.getSearchResults(
+            { title: '', includedTags: [], excludedTags: [{ id: `genre:${target}` }], parameters: {} }, undefined)
+        const leaked = withExclusion.results.map((r) => r.mangaId).filter((id) => members.includes(id))
+        check(`excluding "${target}" drops its titles from the listing`,
+            withExclusion.results.length > 0 && leaked.length === 0,
+            `${withExclusion.results.length} tiles, ${members.length} ${target} series known, ${leaked.length} leaked`)
+    }
+
     // Browsing by a genre tag must actually reach that genre's listing, and a
     // title pulled from that listing must parse the genre back out -- which is
     // where genre parsing is proven, on a series certain to have one.
