@@ -14903,7 +14903,17 @@ var _Sources = (() => {
     { id: "adult", label: "Adult" }
   ];
   var SM_HIDDEN_COOKIE = "say_catalog_hidden_series=%5B%22bl%22%5D; say_catalog_hidden_latest=%5B%22bl%22%5D";
-  var SM_BANNED_GENRES = /\bmonster/i;
+  var SM_BANNED_GENRE_SLUGS = [
+    "aliens",
+    "animals",
+    "crossdressing",
+    "gender-bender",
+    "genderswap",
+    "monster",
+    "monsters",
+    "monsters-action"
+  ];
+  var SM_BANNED_GENRES = /\bmonsters?\b|\baliens?\b|\banimals?\b|crossdress|gender[- ]?bender|genderswap|\byaoi\b|boys?.?love|shounen[ -]?ai/i;
   var SM_GENRE_PREFIX = "genre:";
   var PLACEHOLDER = /^(updating|unknown|none|n\/a|-)$/i;
   var routeFor = (id) => {
@@ -14922,6 +14932,17 @@ var _Sources = (() => {
     if (value.startsWith("/")) return `${SM_DOMAIN}${value}`;
     if (value.startsWith("http://")) return `https://${value.slice(7)}`;
     return value;
+  };
+  var bannedGenreOn = ($2) => {
+    for (const element of $2('.series-v72-genres a, a[href*="/genres/"]').toArray()) {
+      const slug = /\/genres\/([^/?#]+)\/?$/.exec($2(element).attr("href") ?? "")?.[1] ?? "";
+      const label = $2(element).text().trim();
+      if (slug.length > 0 && SM_BANNED_GENRE_SLUGS.indexOf(slug) >= 0) {
+        return label.length > 0 ? label : slug;
+      }
+      if (label.length > 0 && SM_BANNED_GENRES.test(label)) return label;
+    }
+    return void 0;
   };
   var parseTiles = ($2) => {
     const rows = [];
@@ -15108,7 +15129,7 @@ var _Sources = (() => {
 
   // src/FullManhwa/FullManhwa.ts
   var FullManhwaInfo = {
-    version: "2.4.1",
+    version: "2.5.0",
     name: "SayManhwa",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15158,6 +15179,17 @@ var _Sources = (() => {
           }
         }
       });
+      /**
+       * Which series sit under a genre, gathered from the site's own genre
+       * listing and kept for an hour.
+       *
+       * This is the only way genre can be applied to a listing here. A card
+       * carries a cover and a title and nothing else -- no genre, no data
+       * attributes -- the site publishes no JSON API, and its filter takes a
+       * single genre and ignores every array, comma and minus form. So a genre
+       * is turned into the set of series under it, and the sets do the work.
+       */
+      this.genreMembers = /* @__PURE__ */ new Map();
     }
     getMangaShareUrl(mangaId) {
       return `${SM_BASE}/series/${mangaId}`;
@@ -15299,12 +15331,16 @@ The site limits how much one device may ask for at once, and refreshing a whole 
      * completed listing a full page -- and handing the app an empty batch
      * risks stalling its scroll.
      */
-    async walkListing(urlFor, page, seen) {
+    async walkListing(urlFor, page, seen, exclude, require2) {
       const tiles = [];
       let current = page;
       for (let hop = 0; hop < 4; hop++) {
         const $2 = await this.loadPage(urlFor(current));
-        const rows = parseTiles($2);
+        const rows = parseTiles($2).filter((row) => {
+          if (exclude != void 0 && exclude.has(row.slug)) return false;
+          if (require2 != void 0 && !require2.has(row.slug)) return false;
+          return true;
+        });
         tiles.push(...this.tilesFrom(rows, seen));
         if (isLastPage($2)) return { tiles };
         if (rows.length > 0 && tiles.length === 0) return { tiles };
@@ -15313,18 +15349,104 @@ The site limits how much one device may ask for at once, and refreshing a whole 
       }
       return { tiles, nextPage: current };
     }
-    async pagedListing(urlFor, page, seen) {
-      const walk = await this.walkListing(urlFor, page, seen);
+    async pagedListing(urlFor, page, seen, exclude, require2) {
+      const walk = await this.walkListing(urlFor, page, seen, exclude, require2);
       return App.createPagedResults({
         results: walk.tiles,
         metadata: walk.nextPage == void 0 ? void 0 : { page: walk.nextPage, seen: Array.from(seen) }
       });
     }
+    static {
+      this.MEMBERSHIP_TTL = 36e5;
+    }
+    static {
+      /**
+       * Four pages, ninety-six series. Every excluded genre on this site is far
+       * smaller than that -- the largest, monsters, has seventeen, and most have
+       * one -- so the cap only ever bites on a broad genre a reader chose to
+       * leave out themselves, where it degrades to filtering the most recent
+       * rather than to filtering nothing.
+       */
+      this.MEMBERSHIP_PAGES = 4;
+    }
+    async membersOf(slug) {
+      const cached = this.genreMembers.get(slug);
+      if (cached != void 0 && Date.now() - cached.at < _FullManhwa.MEMBERSHIP_TTL) return cached.slugs;
+      const slugs = /* @__PURE__ */ new Set();
+      for (let page = 1; page <= _FullManhwa.MEMBERSHIP_PAGES; page++) {
+        const rows = parseTiles(await this.loadPage(this.listingUrl(`${SM_GENRE_PREFIX}${slug}`, page)));
+        let fresh = 0;
+        for (const row of rows) {
+          if (slugs.has(row.slug)) continue;
+          slugs.add(row.slug);
+          fresh++;
+        }
+        if (fresh === 0) break;
+      }
+      this.genreMembers.set(slug, { at: Date.now(), slugs });
+      return slugs;
+    }
+    /**
+     * Every series under a standing-excluded genre.
+     *
+     * Warmed one genre per listing rather than all at once: eight genres is
+     * eight requests against an origin that needs seconds for each, and
+     * holding up the first listing by half a minute to do it would trade one
+     * complaint for another. Until it is warm the details gate below is what
+     * enforces the rule, and it needs no requests of its own.
+     */
+    async bannedSeries(warm) {
+      const all = /* @__PURE__ */ new Set();
+      let warmedOne = false;
+      for (const slug of SM_BANNED_GENRE_SLUGS) {
+        const cached = this.genreMembers.get(slug);
+        if (cached != void 0 && Date.now() - cached.at < _FullManhwa.MEMBERSHIP_TTL) {
+          cached.slugs.forEach((member) => all.add(member));
+          continue;
+        }
+        if (!warm || warmedOne) continue;
+        warmedOne = true;
+        try {
+          (await this.membersOf(slug)).forEach((member) => all.add(member));
+        } catch {
+        }
+      }
+      return all;
+    }
+    /**
+     * The series a reader's own excluded genres cover. Kept separate from the
+     * standing exclusions because it is a preference rather than a rule: it is
+     * applied to listings, where a title can be left out quietly, and not at
+     * the details gate, where it would surface as an error on a title the app
+     * had just offered.
+     */
+    async excludedSeries(query) {
+      const all = /* @__PURE__ */ new Set();
+      for (const tag of query.excludedTags ?? []) {
+        const id = tag.id ?? "";
+        if (!id.startsWith(SM_GENRE_PREFIX)) continue;
+        try {
+          (await this.membersOf(id.slice(SM_GENRE_PREFIX.length))).forEach((member) => all.add(member));
+        } catch {
+        }
+      }
+      return all;
+    }
     async getMangaDetails(mangaId) {
-      return parseMangaDetails(await this.loadPage(this.getMangaShareUrl(mangaId)), mangaId);
+      const $2 = await this.loadPage(this.getMangaShareUrl(mangaId));
+      const banned = bannedGenreOn($2);
+      if (banned != void 0) {
+        throw new Error(`This title is filed under "${banned}", which your settings exclude, and will not be shown.`);
+      }
+      return parseMangaDetails($2, mangaId);
     }
     async getChapters(mangaId) {
-      return parseChapters(await this.loadPage(this.getMangaShareUrl(mangaId)));
+      const $2 = await this.loadPage(this.getMangaShareUrl(mangaId));
+      const banned = bannedGenreOn($2);
+      if (banned != void 0) {
+        throw new Error(`This title is filed under "${banned}", which your settings exclude, and will not be shown.`);
+      }
+      return parseChapters($2);
     }
     /**
      * Pages come straight out of the chapter HTML now. The rebuilt reader
@@ -15346,13 +15468,28 @@ The site limits how much one device may ask for at once, and refreshing a whole 
       const page = metadata?.page ?? 1;
       const seen = new Set(metadata?.seen ?? []);
       const title = (query.title ?? "").trim();
-      const selected = (query.includedTags ?? [])[0]?.id;
+      const included = (query.includedTags ?? []).map((tag) => tag.id ?? "").filter((id) => id.length > 0);
+      const selected = included[0];
       const urlFor = title.length > 0 ? (p) => `${SM_BASE}/series?q=${encodeURIComponent(title)}&page=${p}` : (p) => this.listingUrl(selected ?? "latest", p);
-      return this.pagedListing(urlFor, page, seen);
+      let require2;
+      for (const id of included.slice(1)) {
+        if (!id.startsWith(SM_GENRE_PREFIX)) continue;
+        const members = await this.membersOf(id.slice(SM_GENRE_PREFIX.length));
+        require2 = require2 == void 0 ? members : new Set(Array.from(require2).filter((slug) => members.has(slug)));
+      }
+      const exclude = await this.excludedSeries(query);
+      for (const slug of await this.bannedSeries(true)) exclude.add(slug);
+      return this.pagedListing(urlFor, page, seen, exclude, require2);
     }
-    /** The site offers no way to exclude a genre, so exclusion is not claimed. */
+    /**
+     * Exclusion is offered. The site cannot do it -- there is no exclusion
+     * parameter, and a listing card carries no genre to test -- so a genre to
+     * leave out is turned into the series under it and those are dropped from
+     * the listing. Whatever the reader excludes is on top of the standing
+     * exclusions, which cannot be switched back on.
+     */
     async supportsTagExclusion() {
-      return false;
+      return true;
     }
     /**
      * The genre list is read off the catalog filter rather than hardcoded, so it
@@ -15394,7 +15531,8 @@ The site limits how much one device may ask for at once, and refreshing a whole 
           containsMoreItems: true,
           items: []
         });
-        const walk = await this.walkListing((p) => this.listingUrl(entry.id, p), 1, /* @__PURE__ */ new Set());
+        const banned = await this.bannedSeries(entry === SM_SECTIONS[0]);
+        const walk = await this.walkListing((p) => this.listingUrl(entry.id, p), 1, /* @__PURE__ */ new Set(), banned);
         section.items = walk.tiles;
         sectionCallback(section);
       }
@@ -15402,7 +15540,7 @@ The site limits how much one device may ask for at once, and refreshing a whole 
     async getViewMoreItems(homepageSectionId, metadata) {
       const page = metadata?.page ?? 1;
       const seen = new Set(metadata?.seen ?? []);
-      return this.pagedListing((p) => this.listingUrl(homepageSectionId, p), page, seen);
+      return this.pagedListing((p) => this.listingUrl(homepageSectionId, p), page, seen, await this.bannedSeries(true));
     }
   };
   return __toCommonJS(FullManhwa_exports);
