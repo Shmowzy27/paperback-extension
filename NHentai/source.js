@@ -741,91 +741,8 @@ var _Sources = (() => {
     splitTitle: () => splitTitle
   });
   var import_types = __toESM(require_lib());
-  var NH_DOMAIN = "https://nhentai.net";
-  var NH_API = `${NH_DOMAIN}/api/v2`;
-  var NH_IMAGE_CDN = "https://i1.nhentai.net";
-  var NH_THUMB_CDN = "https://t1.nhentai.net";
-  var NH_BANNED = [
-    // BL and male-to-male
-    { id: 23895, name: "yaoi" },
-    { id: 21712, name: "males only" },
-    { id: 29023, name: "tomgirl" },
-    { id: 15782, name: "crossdressing" },
-    // appearance
-    { id: 162979, name: "ugly bastard" },
-    { id: 73750, name: "bald" },
-    { id: 80498, name: "gigantic breasts" },
-    // age
-    { id: 2956, name: "old man" },
-    { id: 133145, name: "grandfather" },
-    { id: 29013, name: "dilf" },
-    // group and arrangement
-    { id: 8010, name: "group" },
-    { id: 31880, name: "bbm" },
-    { id: 7256, name: "mmf threesome" },
-    // creatures
-    { id: 18567, name: "monster" },
-    { id: 7550, name: "monster girl" },
-    { id: 31775, name: "tentacles" },
-    { id: 17967, name: "alien" }
-  ];
-  var NH_BANNED_NAMES_ONLY = [
-    "mmmf",
-    "older man younger woman",
-    "old guy",
-    // multiple male-bodied participants
-    "mmm threesome",
-    "mmt threesome",
-    "mtf threesome",
-    "ttf threesome",
-    "ttm threesome",
-    "gang rape",
-    "gangbang",
-    "orgy",
-    // animals and creatures
-    "bestiality",
-    "low bestiality",
-    "furry",
-    "animal on animal",
-    "human on furry",
-    "octopus",
-    "slime",
-    "insect",
-    "snake",
-    "spider",
-    "worm",
-    "centaur",
-    "minotaur",
-    "horse",
-    "horse cock",
-    "dog",
-    "cat",
-    "pig",
-    "fish",
-    "frog",
-    "bear",
-    "wolf"
-  ];
-  var ORIGINAL_PARODY_ID = 90671;
-  var PARODY_CATALOG_PAGES = 12;
-  var BANNED_IDS = new Set(NH_BANNED.map((tag) => tag.id));
-  var EXCLUSION = NH_BANNED.map((tag) => ` -tag:"${tag.name}"`).join("") + NH_BANNED_NAMES_ONLY.map((name) => ` -tag:"${name}"`).join("");
-  var LANGUAGES = [
-    { id: "english", label: "English" }
-  ];
-  var ENGLISH_ID = 12227;
-  var MULTI_WORK_SERIES_ID = 21572;
-  var isMultiWork = (tagIds) => (tagIds ?? []).includes(MULTI_WORK_SERIES_ID);
-  var TAG_TYPES = [
-    { type: "tag", label: "Tags" },
-    { type: "artist", label: "Artists" },
-    { type: "parody", label: "Parodies" }
-  ];
-  var SECTIONS = [
-    { id: "new", label: "New Uploads (English)", sort: "date" },
-    { id: "popular-week", label: "Popular This Week (English)", sort: "popular-week" },
-    { id: "popular", label: "All-Time Popular (English)", sort: "popular" }
-  ];
+
+  // src/NHentai/SeriesMerge.ts
   var VOLUME = "(\\d{1,3}(?:\\.\\d{1,2})?)(?:\\s*[~\\-\u2013]\\s*\\d{1,3}(?=\\s|$))?";
   var SUBTITLE = '(?:\\s*[:\\-\u2013\u2014~"\u201C\u300C\u300E]\\s*.*)?';
   var ANYTHING = '(?:[\\s:\\-\u2013\u2014~"\u201C\u300C\u300E].*)?';
@@ -854,7 +771,17 @@ var _Sources = (() => {
     return parts[key] ?? 1;
   };
   var AFTERWORDS = "after\\s*story|afterstory|after|extras?|omake|bonus|epilogue|side\\s*story|special|continued|plus";
+  var GLUED_RULE = { pattern: /^(.*?[A-Za-z])(\d{1,2})$/, volume: (m) => Number(m[2]) };
   var VOLUME_RULES = [
+    // "… Season 3 ep.4: Subtitle", from HentaiNexus. Season and episode fold
+    // into one number so every season of a work lands in one series: season 3
+    // episode 4 is 3.04 -- a hundredth, not a tenth, so episode 10 still sorts
+    // after episode 9. Tried first, or the episode keyword below would stop at
+    // the season and leave "… Season 3" as the series name.
+    {
+      pattern: new RegExp(`^(.*?\\S)\\s+season\\s*(\\d{1,2})\\s*(?:ep\\.?|episode)\\s*(\\d{1,3})${SUBTITLE}$`, "i"),
+      volume: (m) => Number(m[2]) + Number(m[3]) / 100
+    },
     // An explicit keyword makes the number certain, so anything may follow.
     { pattern: new RegExp(`^(.*?\\S)\\s+(?:ch\\.?|chapter|vol\\.?|volume|episode|ep\\.?)\\s*${VOLUME}${ANYTHING}$`, "i"), volume: (m) => Number(m[2]) },
     { pattern: new RegExp(`^(.*?\\S)[\\s\\-\u2013]+(?:part|pt\\.?)\\s*${VOLUME}${ANYTHING}$`, "i"), volume: (m) => Number(m[2]) },
@@ -886,9 +813,7 @@ var _Sources = (() => {
     { pattern: /^(.*?\S)\s+(II|III|IV|VI|VII|VIII|IX)(?:\s*[:\-–—~"“「『].*)?$/, volume: (m) => ROMAN_NUMBERS[m[2]] ?? 1 },
     // A bare trailing number, with or without a separated subtitle.
     { pattern: new RegExp(`^(.*?\\S)\\s+${VOLUME}${SUBTITLE}$`), volume: (m) => Number(m[2]) },
-    // "WASANBON NAGI3" -- this site frequently glues the number straight onto
-    // the last word, which every whitespace-anchored pattern above misses.
-    { pattern: /^(.*?[A-Za-z])(\d{1,2})$/, volume: (m) => Number(m[2]) }
+    GLUED_RULE
   ];
   var SUBTITLE_SEPARATORS = [" - ", " \u2013 ", " \u2014 ", ": ", " ~", "~ ", ' "', " \u201C", " \u300C", " \u300E"];
   var cleanTitle = (raw) => {
@@ -902,10 +827,10 @@ var _Sources = (() => {
     text = halves.length > 0 ? halves[0] : text;
     return text.replace(/\s+/g, " ").trim().replace(/^[-~:.\s]+|[-~:.\s]+$/g, "");
   };
-  var splitTitle = (title, series = false) => {
-    const trimmed = cleanTitle(title);
+  var splitClean = (trimmed, series = false, glued = true) => {
     const tidy = (base) => base.replace(/[\s\-–—:,.~]+$/, "").trim();
     for (const rule of VOLUME_RULES) {
+      if (!glued && rule === GLUED_RULE) continue;
       const match = rule.pattern.exec(trimmed);
       if (!match) continue;
       const base = tidy(match[1]);
@@ -925,7 +850,12 @@ var _Sources = (() => {
       const base = tidy(trimmed.slice(0, cut));
       return { base: base.length > 0 ? base : trimmed, volume: 1, marked: true, numbered: false };
     }
-    return { base: trimmed.length > 0 ? trimmed : title.trim(), volume: 1, marked: false, numbered: false };
+    return { base: trimmed, volume: 1, marked: false, numbered: false };
+  };
+  var splitTitle = (title, series = false) => {
+    const trimmed = cleanTitle(title);
+    const split = splitClean(trimmed.length > 0 ? trimmed : title.trim(), series);
+    return split;
   };
   var seriesKey = (base) => base.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   var keyWords = (base) => seriesKey(base).split(" ").filter((word) => word.length > 0);
@@ -1043,9 +973,301 @@ var _Sources = (() => {
     return match ? seriesKey(match[1]) : "";
   };
   var SERIES_PREFIX = "s:";
-  var seriesIdFor = (title) => `${SERIES_PREFIX}${splitTitle(title).base}`;
-  var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
-  var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
+  var FOLD_TTL = 18e5;
+  var foldedInto = (memo, base) => memo.remembered(`f:${seriesKey(base)}`) ?? [];
+  var foldTiles = (items, seen, memo) => {
+    const series = [];
+    const foldInto = (tileRef, more) => {
+      if (tileRef == void 0 || tileRef.startsWith("#") || more.length === 0) return;
+      const list = memo.remembered(`f:${tileRef}`) ?? [];
+      for (const item of more) {
+        if (!list.some((known) => known.id === item.id)) list.push(item);
+      }
+      memo.remember(`f:${tileRef}`, list, FOLD_TTL);
+    };
+    const recordMember = (item, tileRef) => {
+      if (tileRef == void 0) return;
+      const creator = creatorOf(item.raw);
+      if (creator.length === 0) return;
+      const split = splitTitle(item.raw, item.multiWork);
+      const record = `a:${creator}|${seriesKey(split.base)}`;
+      seen.add(record);
+      memo.remember(`k:${record}`, tileRef, FOLD_TTL);
+      memo.remember(`q:${record}`, split.numbered, FOLD_TTL);
+    };
+    const adopt = (tileKey, ref) => {
+      const book = memo.remembered(`i:${ref.slice(1)}`);
+      if (book != void 0) foldInto(tileKey, [book]);
+    };
+    const continues = (shortKey, longKey, longNumbered) => shortKey.length < longKey.length && !longNumbered && sharesLead(shortKey, longKey);
+    for (const item of items) {
+      const { base, volume, marked, numbered } = splitTitle(item.raw, item.multiWork);
+      const clean = cleanTitle(item.raw) || item.raw;
+      const creator = creatorOf(item.raw);
+      const book = !numbered && seriesKey(base) === seriesKey(clean);
+      const key = seriesKey(base);
+      const id = marked ? `${SERIES_PREFIX}${base}` : item.id;
+      const title = marked ? base : clean;
+      const thumb = item.thumb;
+      memo.remember(`i:${item.id}`, item, FOLD_TTL);
+      const same = series.find((other) => other.key === key);
+      if (same != void 0) {
+        if (volume < same.volume) {
+          same.volume = volume;
+          same.thumb = thumb;
+        }
+        same.folded.push(item);
+        continue;
+      }
+      if (seen.has(`t:${key}`) || seen.has(`n:${key}`)) {
+        const tileRef = memo.remembered(`k:t:${key}`) ?? memo.remembered(`k:n:${key}`);
+        foldInto(tileRef, [item]);
+        recordMember(item, tileRef);
+        continue;
+      }
+      const root = book ? bookRoot(clean) : "";
+      if (root.length > 0) {
+        if (seen.has(`r:${root}`)) continue;
+        seen.add(`r:${root}`);
+      }
+      let folded = false;
+      for (const other of series) {
+        if (!sharesLead(other.key, key)) continue;
+        if (key.length > other.key.length && book && !other.book) {
+          folded = true;
+        } else if (key.length < other.key.length && !book && other.book) {
+          other.key = key;
+          other.id = `${SERIES_PREFIX}${base}`;
+          other.title = base;
+          other.book = false;
+          other.clean = clean;
+          if (volume < other.volume) {
+            other.volume = volume;
+            other.thumb = thumb;
+          }
+          folded = true;
+        } else if (book && other.book) {
+          folded = root.length > 0 && bookRoot(other.clean) === root;
+        }
+        if (folded) {
+          other.folded.push(item);
+          break;
+        }
+      }
+      if (!folded) {
+        for (const emitted of seen) {
+          if (emitted.startsWith("r:") || emitted.startsWith("a:")) continue;
+          const other = emitted.slice(2);
+          if (!sharesLead(other, key)) continue;
+          const otherIsBook = emitted.startsWith("n:");
+          if (key.length > other.length && book && !otherIsBook || key.length < other.length && !book && otherIsBook) {
+            const tileRef = memo.remembered(`k:${emitted}`);
+            if (tileRef != void 0 && tileRef.startsWith("#")) {
+              if (marked) adopt(seriesKey(base), tileRef);
+              break;
+            }
+            foldInto(tileRef, [item]);
+            recordMember(item, tileRef);
+            folded = true;
+            break;
+          }
+        }
+      }
+      if (!folded && creator.length > 0) {
+        const other = series.find((candidate) => candidate.creator === creator && (sharesTail(candidate.key, key) || continues(candidate.key, key, numbered) || continues(key, candidate.key, candidate.numbered)));
+        if (other != void 0) {
+          if (continues(key, other.key, other.numbered)) {
+            other.key = key;
+            other.id = `${SERIES_PREFIX}${base}`;
+            other.title = base;
+            other.numbered = numbered;
+          } else if (!other.id.startsWith(SERIES_PREFIX)) {
+            const takeThis = marked && !continues(other.key, key, numbered);
+            other.id = takeThis ? `${SERIES_PREFIX}${base}` : `${SERIES_PREFIX}${other.title}`;
+            if (takeThis) other.title = base;
+          }
+          other.book = false;
+          if (volume < other.volume) {
+            other.volume = volume;
+            other.thumb = thumb;
+          }
+          other.folded.push(item);
+          folded = true;
+        } else {
+          const prefix = `a:${creator}|`;
+          for (const emitted of seen) {
+            if (!emitted.startsWith(prefix)) continue;
+            const earlier = emitted.slice(prefix.length);
+            const earlierNumbered = memo.remembered(`q:${emitted}`) ?? true;
+            if (!(sharesTail(earlier, key) || continues(earlier, key, numbered) || continues(key, earlier, earlierNumbered))) continue;
+            const tileRef = memo.remembered(`k:${emitted}`);
+            if (tileRef != void 0 && tileRef.startsWith("#")) {
+              if (marked) adopt(seriesKey(base), tileRef);
+            } else {
+              foldInto(tileRef, [item]);
+              recordMember(item, tileRef);
+              folded = true;
+            }
+            break;
+          }
+        }
+      }
+      if (folded) continue;
+      series.push({
+        key,
+        id,
+        title,
+        volume,
+        thumb,
+        book,
+        numbered,
+        clean,
+        creator,
+        own: item,
+        folded: []
+      });
+    }
+    const tiles = [];
+    for (const entry of series) {
+      const key = `${entry.book ? "n" : "t"}:${entry.key}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const isSeries = entry.id.startsWith(SERIES_PREFIX);
+      const tileRef = isSeries ? seriesKey(entry.id.slice(SERIES_PREFIX.length)) : `#${entry.id}`;
+      if (isSeries) foldInto(tileRef, [entry.own, ...entry.folded]);
+      memo.remember(`k:${key}`, tileRef, FOLD_TTL);
+      if (entry.creator.length > 0) {
+        const record = `a:${entry.creator}|${entry.key}`;
+        seen.add(record);
+        memo.remember(`k:${record}`, tileRef, FOLD_TTL);
+        memo.remember(`q:${record}`, entry.numbered, FOLD_TTL);
+      }
+      for (const member of isSeries ? [entry.own, ...entry.folded] : [entry.own]) {
+        recordMember(member, tileRef);
+      }
+      tiles.push({ id: entry.id, title: entry.title, thumb: entry.thumb });
+    }
+    return tiles;
+  };
+  var isLongName = (candidates, base) => {
+    const wanted = seriesKey(base);
+    return candidates.some((candidate) => {
+      const clean = cleanTitle(candidate.raw) || candidate.raw;
+      return seriesKey(clean) === wanted && !splitTitle(candidate.raw, candidate.multiWork).numbered;
+    });
+  };
+  var volumeOf = (candidate, base, longName, sameArtist, trusted = false) => {
+    const wanted = seriesKey(base);
+    const split = splitTitle(candidate.raw, candidate.multiWork);
+    const key = seriesKey(split.base);
+    let belongs = trusted || key === wanted;
+    if (!belongs && sharesLead(key, wanted)) {
+      belongs = key.length > wanted.length ? !split.numbered : longName && (split.numbered || sameArtist);
+    }
+    if (!belongs && sameArtist) belongs = sharesTail(key, wanted);
+    const title = cleanTitle(candidate.raw) || candidate.raw;
+    return { belongs, volume: split.volume, title, book: `${split.volume}|${seriesKey(title)}` };
+  };
+  var orderVolumes = (volumes) => {
+    const ordered = volumes.slice().sort((a, b) => a.volume - b.volume || Number(a.id) - Number(b.id));
+    let next = ordered.filter((volume) => volume.volume < FINAL).reduce((highest, volume) => Math.max(highest, Math.floor(volume.volume)), 0) + 1;
+    for (const volume of ordered) {
+      if (volume.volume >= FINAL) volume.volume = next++;
+    }
+    return ordered;
+  };
+  var nothingToShow = (base, refused, englishOnly) => refused > 0 ? `Every volume of "${base}" is left out by your settings (an excluded tag or a parody), so it will not be shown.` : englishOnly ? `No volumes of "${base}" can be shown: this source shows English galleries only, and leaves out anything your settings exclude.` : `No volumes of "${base}" can be shown: the site returned none, or your settings leave them all out.`;
+
+  // src/NHentai/NHentai.ts
+  var NH_DOMAIN = "https://nhentai.net";
+  var NH_API = `${NH_DOMAIN}/api/v2`;
+  var NH_IMAGE_CDN = "https://i1.nhentai.net";
+  var NH_THUMB_CDN = "https://t1.nhentai.net";
+  var NH_BANNED = [
+    // BL and male-to-male
+    { id: 23895, name: "yaoi" },
+    { id: 21712, name: "males only" },
+    { id: 29023, name: "tomgirl" },
+    { id: 15782, name: "crossdressing" },
+    // appearance
+    { id: 162979, name: "ugly bastard" },
+    { id: 73750, name: "bald" },
+    { id: 80498, name: "gigantic breasts" },
+    // age
+    { id: 2956, name: "old man" },
+    { id: 133145, name: "grandfather" },
+    { id: 29013, name: "dilf" },
+    // group and arrangement
+    { id: 8010, name: "group" },
+    { id: 31880, name: "bbm" },
+    { id: 7256, name: "mmf threesome" },
+    // creatures
+    { id: 18567, name: "monster" },
+    { id: 7550, name: "monster girl" },
+    { id: 31775, name: "tentacles" },
+    { id: 17967, name: "alien" }
+  ];
+  var NH_BANNED_NAMES_ONLY = [
+    "mmmf",
+    "older man younger woman",
+    "old guy",
+    // multiple male-bodied participants
+    "mmm threesome",
+    "mmt threesome",
+    "mtf threesome",
+    "ttf threesome",
+    "ttm threesome",
+    "gang rape",
+    "gangbang",
+    "orgy",
+    // animals and creatures
+    "bestiality",
+    "low bestiality",
+    "furry",
+    "animal on animal",
+    "human on furry",
+    "octopus",
+    "slime",
+    "insect",
+    "snake",
+    "spider",
+    "worm",
+    "centaur",
+    "minotaur",
+    "horse",
+    "horse cock",
+    "dog",
+    "cat",
+    "pig",
+    "fish",
+    "frog",
+    "bear",
+    "wolf"
+  ];
+  var ORIGINAL_PARODY_ID = 90671;
+  var PARODY_CATALOG_PAGES = 12;
+  var BANNED_IDS = new Set(NH_BANNED.map((tag) => tag.id));
+  var EXCLUSION = NH_BANNED.map((tag) => ` -tag:"${tag.name}"`).join("") + NH_BANNED_NAMES_ONLY.map((name) => ` -tag:"${name}"`).join("");
+  var LANGUAGES = [
+    { id: "english", label: "English" }
+  ];
+  var ENGLISH_ID = 12227;
+  var MULTI_WORK_SERIES_ID = 21572;
+  var isMultiWork = (tagIds) => (tagIds ?? []).includes(MULTI_WORK_SERIES_ID);
+  var TAG_TYPES = [
+    { type: "tag", label: "Tags" },
+    { type: "artist", label: "Artists" },
+    { type: "parody", label: "Parodies" }
+  ];
+  var SECTIONS = [
+    { id: "new", label: "New Uploads (English)", sort: "date" },
+    { id: "popular-week", label: "Popular This Week (English)", sort: "popular-week" },
+    { id: "popular", label: "All-Time Popular (English)", sort: "popular" }
+  ];
+  var SERIES_PREFIX2 = "s:";
+  var seriesIdFor = (title) => `${SERIES_PREFIX2}${splitTitle(title).base}`;
+  var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX2);
+  var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX2.length);
   var searchTermFor = (tagId, exclude) => {
     const separator = tagId.indexOf(":");
     const known = LANGUAGES.some((entry) => entry.id === tagId);
@@ -1059,7 +1281,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "2.3.1",
+    version: "2.3.2",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -1270,272 +1492,90 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
       return ids;
     }
     /**
-     * Collapses the volumes on a page into one entry per series, the way
-     * HentaiNexus does: the lowest-numbered volume supplies the cover, and the
-     * series name is what the entry is called.
-     *
-     * `seen` carries the series already handed out by earlier pages, so a
-     * series straddling a page boundary is not emitted twice. Its keys record
-     * whether a name was read off a numbered volume (`t:`) or is one book's own
-     * long name (`n:`), because that decides which way a continuing name may
-     * fold: "Aimai na Bokura Kanojo wa…" folds into "Aimai na Bokura", but
-     * "Marked-girls Collection" -- numbered itself, a line of its own -- must
-     * never fold into "Marked-girls".
+     * Collapses a page of listing entries into one tile per series. The fold
+     * itself is foldTiles in SeriesMerge.ts, shared with AsmHentai, so the
+     * two sources merge by exactly the same rules; this holds the entries to
+     * this source's own first -- English, the standing exclusions, known
+     * parodies -- and remembers each, so that opening it costs no request.
      */
     tilesFrom(entries, seen, parodies) {
-      const series = [];
+      const items = [];
       for (const entry of entries) {
         if (!this.admitted(entry.tag_ids, parodies)) continue;
-        const raw = (entry.english_title ?? entry.japanese_title ?? `Gallery ${entry.id}`).trim();
-        const { base, volume, marked, numbered } = splitTitle(raw, isMultiWork(entry.tag_ids));
-        const thumb = (entry.thumbnail ?? "").replace(/^\/+/, "");
-        const clean = cleanTitle(raw) || raw;
-        const creator = creatorOf(raw);
-        const book = !numbered && seriesKey(base) === seriesKey(clean);
-        const key = seriesKey(base);
-        const id = marked ? `s:${base}` : String(entry.id);
-        const title = marked ? base : clean;
         this.remember(`l:${entry.id}`, entry, 18e5);
-        const same = series.find((other) => other.key === key);
-        if (same != void 0) {
-          if (volume < same.volume) {
-            same.volume = volume;
-            same.thumb = thumb;
-          }
-          same.folded.push(entry);
-          continue;
-        }
-        if (seen.has(`t:${key}`) || seen.has(`n:${key}`)) {
-          const tileRef = this.remembered(`k:t:${key}`) ?? this.remembered(`k:n:${key}`);
-          this.foldInto(tileRef, [entry]);
-          this.recordMember(seen, entry, tileRef);
-          continue;
-        }
-        const root = book ? bookRoot(clean) : "";
-        if (root.length > 0) {
-          if (seen.has(`r:${root}`)) continue;
-          seen.add(`r:${root}`);
-        }
-        let folded = false;
-        for (const other of series) {
-          if (!sharesLead(other.key, key)) continue;
-          if (key.length > other.key.length && book && !other.book) {
-            folded = true;
-          } else if (key.length < other.key.length && !book && other.book) {
-            other.key = key;
-            other.id = `s:${base}`;
-            other.title = base;
-            other.book = false;
-            other.clean = clean;
-            if (volume < other.volume) {
-              other.volume = volume;
-              other.thumb = thumb;
-            }
-            folded = true;
-          } else if (book && other.book) {
-            folded = root.length > 0 && bookRoot(other.clean) === root;
-          }
-          if (folded) {
-            other.folded.push(entry);
-            break;
-          }
-        }
-        if (!folded) {
-          for (const emitted of seen) {
-            if (emitted.startsWith("r:") || emitted.startsWith("a:")) continue;
-            const other = emitted.slice(2);
-            if (!sharesLead(other, key)) continue;
-            const otherIsBook = emitted.startsWith("n:");
-            if (key.length > other.length && book && !otherIsBook || key.length < other.length && !book && otherIsBook) {
-              const tileRef = this.remembered(`k:${emitted}`);
-              if (tileRef != void 0 && tileRef.startsWith("#")) {
-                if (marked) this.adopt(seriesKey(base), tileRef);
-                break;
-              }
-              this.foldInto(tileRef, [entry]);
-              this.recordMember(seen, entry, tileRef);
-              folded = true;
-              break;
-            }
-          }
-        }
-        const continues = (shortKey, longKey, longNumbered) => shortKey.length < longKey.length && !longNumbered && sharesLead(shortKey, longKey);
-        if (!folded && creator.length > 0) {
-          const other = series.find((candidate) => candidate.creator === creator && (sharesTail(candidate.key, key) || continues(candidate.key, key, numbered) || continues(key, candidate.key, candidate.numbered)));
-          if (other != void 0) {
-            if (continues(key, other.key, other.numbered)) {
-              other.key = key;
-              other.id = `s:${base}`;
-              other.title = base;
-              other.numbered = numbered;
-            } else if (!other.id.startsWith("s:")) {
-              const takeThis = marked && !continues(other.key, key, numbered);
-              other.id = takeThis ? `s:${base}` : `s:${other.title}`;
-              if (takeThis) other.title = base;
-            }
-            other.book = false;
-            if (volume < other.volume) {
-              other.volume = volume;
-              other.thumb = thumb;
-            }
-            other.folded.push(entry);
-            folded = true;
-          } else {
-            const prefix = `a:${creator}|`;
-            for (const emitted of seen) {
-              if (!emitted.startsWith(prefix)) continue;
-              const earlier = emitted.slice(prefix.length);
-              const earlierNumbered = this.remembered(`q:${emitted}`) ?? true;
-              if (!(sharesTail(earlier, key) || continues(earlier, key, numbered) || continues(key, earlier, earlierNumbered))) continue;
-              const tileRef = this.remembered(`k:${emitted}`);
-              if (tileRef != void 0 && tileRef.startsWith("#")) {
-                if (marked) this.adopt(seriesKey(base), tileRef);
-              } else {
-                this.foldInto(tileRef, [entry]);
-                this.recordMember(seen, entry, tileRef);
-                folded = true;
-              }
-              break;
-            }
-          }
-        }
-        if (folded) continue;
-        series.push({
-          key,
-          id,
-          title,
-          volume,
-          thumb,
-          book,
-          numbered,
-          clean,
-          creator,
-          own: entry,
-          folded: []
+        const thumb = (entry.thumbnail ?? "").replace(/^\/+/, "");
+        items.push({
+          id: String(entry.id),
+          raw: (entry.english_title ?? entry.japanese_title ?? `Gallery ${entry.id}`).trim(),
+          thumb: thumb.length > 0 ? `${NH_THUMB_CDN}/${thumb}` : "",
+          multiWork: isMultiWork(entry.tag_ids),
+          payload: entry
         });
       }
-      const tiles = [];
-      for (const entry of series) {
-        const key = `${entry.book ? "n" : "t"}:${entry.key}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const tileRef = entry.id.startsWith("s:") ? seriesKey(entry.id.slice(2)) : `#${entry.id}`;
-        if (entry.id.startsWith("s:")) this.foldInto(tileRef, [entry.own, ...entry.folded]);
-        this.remember(`k:${key}`, tileRef, 18e5);
-        if (entry.creator.length > 0) {
-          const record = `a:${entry.creator}|${entry.key}`;
-          seen.add(record);
-          this.remember(`k:${record}`, tileRef, 18e5);
-          this.remember(`q:${record}`, entry.numbered, 18e5);
-        }
-        for (const member of entry.id.startsWith("s:") ? [entry.own, ...entry.folded] : [entry.own]) {
-          this.recordMember(seen, member, tileRef);
-        }
-        tiles.push(App.createPartialSourceManga({
-          mangaId: entry.id,
-          image: entry.thumb.length > 0 ? `${NH_THUMB_CDN}/${entry.thumb}` : "",
-          title: entry.title
-        }));
-      }
-      return tiles;
+      return foldTiles(items, seen, this.foldMemo).map((tile) => App.createPartialSourceManga({
+        mangaId: tile.id,
+        image: tile.thumb,
+        title: tile.title
+      }));
     }
-    /**
-     * Hands listing entries to the series a tile opens as, remembered under the
-     * series' key -- which is where volumesOf looks -- for half an hour, the
-     * same as the listing entries themselves.
-     */
-    foldInto(tileKey, entries) {
-      if (tileKey == void 0 || tileKey.startsWith("#") || entries.length === 0) return;
-      const list = this.remembered(`f:${tileKey}`) ?? [];
-      for (const entry of entries) {
-        if (!list.some((known) => known.id === entry.id)) list.push(entry);
-      }
-      this.remember(`f:${tileKey}`, list, 18e5);
-    }
-    /**
-     * Hands a single book already on screen -- `#id` -- to a series shown
-     * after it, so the series opens with the book it follows.
-     */
-    adopt(tileKey, ref) {
-      const book = this.remembered(`l:${ref.slice(1)}`);
-      if (book != void 0) this.foldInto(tileKey, [book]);
-    }
-    /**
-     * Records a gallery as a member of the tile `tileRef`, under its creator
-     * and its own series key, so that a later page's fold can find the tile
-     * through any gallery it holds.
-     */
-    recordMember(seen, entry, tileRef) {
-      if (tileRef == void 0) return;
-      const raw = (entry.english_title ?? entry.japanese_title ?? "").trim();
-      const creator = creatorOf(raw);
-      if (creator.length === 0) return;
-      const split = splitTitle(raw, isMultiWork(entry.tag_ids));
-      const record = `a:${creator}|${seriesKey(split.base)}`;
-      seen.add(record);
-      this.remember(`k:${record}`, tileRef, 18e5);
-      this.remember(`q:${record}`, split.numbered, 18e5);
+    /** This source's memo, as the shared fold sees it. */
+    get foldMemo() {
+      return {
+        remember: (key, value, ttl) => this.remember(key, value, ttl),
+        remembered: (key) => this.remembered(key)
+      };
     }
     /**
      * Every gallery belonging to `base`, ordered by volume.
      *
      * The first search is for the name itself, which finds every volume that
-     * leads with it. Then the artist's own English catalogue is searched as
-     * well: that is where the volumes that lead with a title of their own are
-     * -- the "COSBITCH!", "Netoria" and "TotonoIki!" books of Marked-girls
-     * Origin, or the first NTR Jigo Houkoku, published as "Toxic JK Netorare
-     * Jigo Houkoku". From there a gallery joins only if its name ends in the
-     * same distinctive words, which keeps the circle's other lines apart.
+     * leads with it. Everything the listing folded into the tile is added on
+     * its word. Then the artist's own English catalogue is searched: that is
+     * where the volumes that lead with a title of their own are -- the
+     * "COSBITCH!", "Netoria" and "TotonoIki!" books of Marked-girls Origin, or
+     * the first NTR Jigo Houkoku, published as "Toxic JK Netorare Jigo
+     * Houkoku". Which of them belong is decided by volumeOf in SeriesMerge.ts,
+     * shared with AsmHentai.
      *
      * Every result is held to the same rules as a listing -- English, the
      * standing exclusions, no parodies -- so a series never gains a chapter the
-     * gate would refuse. The same book uploaded twice, two scanlations of one
-     * volume, is listed once, the newer upload kept.
+     * gate would refuse. The same book uploaded twice is listed once.
      */
     async volumesOf(base) {
-      const wanted = seriesKey(base);
-      const cacheKey = `v:${wanted}`;
+      const cacheKey = `v:${seriesKey(base)}`;
       const cached = this.remembered(cacheKey);
       if (cached != void 0) return cached;
       const parodies = await this.parodyIds();
       const found = /* @__PURE__ */ new Map();
       const books = /* @__PURE__ */ new Set();
+      let refused = 0;
+      const candidate = (entry) => ({
+        raw: (entry.english_title ?? entry.japanese_title ?? "").trim(),
+        multiWork: isMultiWork(entry.tag_ids)
+      });
       const byName = (await this.fetchJson(
         this.searchUrl(seriesQuery(base), "date", 1)
       )).result ?? [];
-      const longName = byName.some((entry) => {
-        const raw = (entry.english_title ?? entry.japanese_title ?? "").trim();
-        return seriesKey(cleanTitle(raw) || raw) === wanted && !splitTitle(raw, isMultiWork(entry.tag_ids)).numbered;
-      });
-      let refused = 0;
+      const longName = isLongName(byName.map(candidate), base);
       const consider = (entries, sameArtist, trusted = false) => {
         for (const entry of entries) {
           if (found.has(entry.id)) continue;
-          const raw = (entry.english_title ?? entry.japanese_title ?? "").trim();
-          const split = splitTitle(raw, isMultiWork(entry.tag_ids));
-          const key = seriesKey(split.base);
-          let belongs = key === wanted;
-          if (!belongs && sharesLead(key, wanted)) {
-            belongs = key.length > wanted.length ? !split.numbered : longName && (split.numbered || sameArtist);
-          }
-          if (!belongs && sameArtist) belongs = sharesTail(key, wanted);
-          if (!belongs && !trusted) continue;
+          const verdict = volumeOf(candidate(entry), base, longName, sameArtist, trusted);
+          if (!verdict.belongs) continue;
           if (!this.admitted(entry.tag_ids, parodies)) {
             refused++;
             continue;
           }
-          const title = cleanTitle(raw) || raw;
-          const book = `${split.volume}|${seriesKey(title)}`;
-          if (books.has(book)) continue;
-          books.add(book);
-          found.set(entry.id, { id: entry.id, title, volume: split.volume, multiWork: isMultiWork(entry.tag_ids) });
+          if (books.has(verdict.book)) continue;
+          books.add(verdict.book);
+          found.set(entry.id, { id: entry.id, title: verdict.title, volume: verdict.volume });
         }
       };
       consider(byName, false);
-      consider(this.remembered(`f:${wanted}`) ?? [], true, true);
+      consider(foldedInto(this.foldMemo, base).map((item) => item.payload), true, true);
       if (found.size > 0) {
         try {
-          const first = Array.from(found.values()).sort((a, b) => a.volume - b.volume)[0];
+          const first = orderVolumes(Array.from(found.values()))[0];
           const tags = (await this.gallery(first.id)).tags ?? [];
           const creator = tags.find((tag) => tag.type === "artist") ?? tags.find((tag) => tag.type === "group");
           if (creator != void 0) {
@@ -1547,14 +1587,8 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         } catch {
         }
       }
-      const volumes = Array.from(found.values()).sort((a, b) => a.volume - b.volume || a.id - b.id).map((volume) => ({ id: volume.id, title: volume.title, volume: volume.volume }));
-      let next = volumes.filter((volume) => volume.volume < FINAL).reduce((highest, volume) => Math.max(highest, Math.floor(volume.volume)), 0) + 1;
-      for (const volume of volumes) {
-        if (volume.volume >= FINAL) volume.volume = next++;
-      }
-      if (volumes.length === 0) {
-        throw new Error(refused > 0 ? `Every volume of "${base}" is left out by your settings (an excluded tag or a parody), so it will not be shown.` : `No volumes of "${base}" can be shown: this source shows English galleries only, and leaves out anything your settings exclude.`);
-      }
+      const volumes = orderVolumes(Array.from(found.values()));
+      if (volumes.length === 0) throw new Error(nothingToShow(base, refused, true));
       this.remember(cacheKey, volumes);
       return volumes;
     }

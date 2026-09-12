@@ -741,6 +741,109 @@ var _Sources = (() => {
     HentaiNexus: () => HentaiNexus,
     HentaiNexusInfo: () => HentaiNexusInfo
   });
+
+  // src/NHentai/SeriesMerge.ts
+  var VOLUME = "(\\d{1,3}(?:\\.\\d{1,2})?)(?:\\s*[~\\-\u2013]\\s*\\d{1,3}(?=\\s|$))?";
+  var SUBTITLE = '(?:\\s*[:\\-\u2013\u2014~"\u201C\u300C\u300E]\\s*.*)?';
+  var ANYTHING = '(?:[\\s:\\-\u2013\u2014~"\u201C\u300C\u300E].*)?';
+  var FINAL = 9999;
+  var WORD_NUMBERS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  var ROMAN_NUMBERS = { II: 2, III: 3, IV: 4, VI: 6, VII: 7, VIII: 8, IX: 9 };
+  var JAPANESE_NUMBERS = {
+    ichi: 1,
+    ni: 2,
+    san: 3,
+    yon: 4,
+    shi: 4,
+    go: 5,
+    roku: 6,
+    nana: 7,
+    shichi: 7,
+    hachi: 8,
+    kyuu: 9,
+    ku: 9,
+    juu: 10
+  };
+  var partNumber = (word) => {
+    const key = word.toLowerCase().replace(/-/g, "");
+    if (key.startsWith("kanketsu")) return FINAL;
+    const parts = { zenpen: 1, joukan: 1, chuuhen: 1.5, chuukan: 1.5, kouhen: 2, gekan: 2 };
+    return parts[key] ?? 1;
+  };
+  var AFTERWORDS = "after\\s*story|afterstory|after|extras?|omake|bonus|epilogue|side\\s*story|special|continued|plus";
+  var GLUED_RULE = { pattern: /^(.*?[A-Za-z])(\d{1,2})$/, volume: (m) => Number(m[2]) };
+  var VOLUME_RULES = [
+    // "… Season 3 ep.4: Subtitle", from HentaiNexus. Season and episode fold
+    // into one number so every season of a work lands in one series: season 3
+    // episode 4 is 3.04 -- a hundredth, not a tenth, so episode 10 still sorts
+    // after episode 9. Tried first, or the episode keyword below would stop at
+    // the season and leave "… Season 3" as the series name.
+    {
+      pattern: new RegExp(`^(.*?\\S)\\s+season\\s*(\\d{1,2})\\s*(?:ep\\.?|episode)\\s*(\\d{1,3})${SUBTITLE}$`, "i"),
+      volume: (m) => Number(m[2]) + Number(m[3]) / 100
+    },
+    // An explicit keyword makes the number certain, so anything may follow.
+    { pattern: new RegExp(`^(.*?\\S)\\s+(?:ch\\.?|chapter|vol\\.?|volume|episode|ep\\.?)\\s*${VOLUME}${ANYTHING}$`, "i"), volume: (m) => Number(m[2]) },
+    { pattern: new RegExp(`^(.*?\\S)[\\s\\-\u2013]+(?:part|pt\\.?)\\s*${VOLUME}${ANYTHING}$`, "i"), volume: (m) => Number(m[2]) },
+    {
+      pattern: new RegExp(`^(.*?\\S)[\\s\\-\u2013]+(?:part|pt\\.?|chapter|volume|vol\\.?)\\s+(one|two|three|four|five|six|seven|eight|nine|ten)${ANYTHING}$`, "i"),
+      volume: (m) => WORD_NUMBERS[m[2].toLowerCase()] ?? 1
+    },
+    { pattern: new RegExp(`^(.*?\\S)\\s*#\\s*${VOLUME}${ANYTHING}$`), volume: (m) => Number(m[2]) },
+    // "その2" / "Sono 2", the Japanese "part 2", on titles that carry only the
+    // Japanese name. The romaji needs a space in front so "Kasono 2" is safe.
+    { pattern: new RegExp(`^(.*?\\S)(?:\\s+sono|\\s*\u305D\u306E)\\s*${VOLUME}${ANYTHING}$`, "i"), volume: (m) => Number(m[2]) },
+    // "Sakura-san Sono San" -- the same, with the number spelt out in romaji.
+    {
+      pattern: /^(.*?\S)\s+sono\s+(ichi|ni|san|yon|shi|go|roku|nana|shichi|hachi|kyuu|ku|juu)(?:[\s:\-–—~"“「『].*)?$/i,
+      volume: (m) => JAPANESE_NUMBERS[m[2].toLowerCase()] ?? 1
+    },
+    // "…NTR P01~08", then "…NTR P01~012": a page range, re-uploaded as the
+    // translation progresses. Each is the same book so far, so each is the
+    // first volume, and the newer upload wins when duplicates are dropped.
+    { pattern: /^(.*?\S)\s+P\d{1,3}\s*[~\-]\s*\d{1,3}$/, volume: () => 1 },
+    // First, middle and last parts, often quoted: Zenpen, "Kouhen", Kanketsu-ban.
+    {
+      pattern: /^(.*?\S)(?:[\s\-–]+["“『「]?|["“『「])(zen-?pen|chuu-?hen|kou-?hen|jou-?kan|chuu-?kan|ge-?kan|kanketsu(?:-?(?:hen|ban))?)["”』」]?(?:[\s:\-–—~].*)?$/i,
+      volume: (m) => partNumber(m[2])
+    },
+    { pattern: new RegExp(`^(.*?\\S)\\s+${VOLUME}\\s*\\+?\\s*(?:${AFTERWORDS})\\b.*$`, "i"), volume: (m) => Number(m[2]) + 0.5 },
+    // Roman numerals, upper case only, so the pronoun "I" and an "x"
+    // collaboration are left alone; V and X are skipped for the same reason.
+    { pattern: /^(.*?\S)\s+(II|III|IV|VI|VII|VIII|IX)(?:\s*[:\-–—~"“「『].*)?$/, volume: (m) => ROMAN_NUMBERS[m[2]] ?? 1 },
+    // A bare trailing number, with or without a separated subtitle.
+    { pattern: new RegExp(`^(.*?\\S)\\s+${VOLUME}${SUBTITLE}$`), volume: (m) => Number(m[2]) },
+    GLUED_RULE
+  ];
+  var SUBTITLE_SEPARATORS = [" - ", " \u2013 ", " \u2014 ", ": ", " ~", "~ ", ' "', " \u201C", " \u300C", " \u300E"];
+  var splitClean = (trimmed, series = false, glued = true) => {
+    const tidy = (base) => base.replace(/[\s\-–—:,.~]+$/, "").trim();
+    for (const rule of VOLUME_RULES) {
+      if (!glued && rule === GLUED_RULE) continue;
+      const match = rule.pattern.exec(trimmed);
+      if (!match) continue;
+      const base = tidy(match[1]);
+      if (base.length > 0) return { base, volume: rule.volume(match), marked: true, numbered: true };
+    }
+    if (series) {
+      const mid = /^(.*?\S)\s+(\d{1,2})\s+\S/.exec(trimmed);
+      if (mid) {
+        const base2 = tidy(mid[1]);
+        if (base2.length > 0) return { base: base2, volume: Number(mid[2]), marked: true, numbered: true };
+      }
+      let cut = trimmed.length;
+      for (const separator of SUBTITLE_SEPARATORS) {
+        const at = trimmed.indexOf(separator);
+        if (at >= 4 && at < cut) cut = at;
+      }
+      const base = tidy(trimmed.slice(0, cut));
+      return { base: base.length > 0 ? base : trimmed, volume: 1, marked: true, numbered: false };
+    }
+    return { base: trimmed, volume: 1, marked: false, numbered: false };
+  };
+  var nothingToShow = (base, refused, englishOnly) => refused > 0 ? `Every volume of "${base}" is left out by your settings (an excluded tag or a parody), so it will not be shown.` : englishOnly ? `No volumes of "${base}" can be shown: this source shows English galleries only, and leaves out anything your settings exclude.` : `No volumes of "${base}" can be shown: the site returned none, or your settings leave them all out.`;
+
+  // src/HentaiNexus/HentaiNexus.ts
   var import_types2 = __toESM(require_lib());
 
   // node_modules/cheerio/dist/browser/static.js
@@ -14982,38 +15085,10 @@ var _Sources = (() => {
   var isLastPage = (cards) => {
     return cards.length < HN_PAGE_SIZE;
   };
-  var VOLUME = "(\\d{1,3}(?:\\.\\d{1,2})?)";
-  var SUBTITLE = "(?:\\s*[:\\-\u2013\u2014]\\s*.+)?";
-  var VOLUME_PATTERNS = [
-    new RegExp(`^(.*?\\S)\\s+(?:ch\\.?|chapter)\\s*${VOLUME}${SUBTITLE}$`, "i"),
-    new RegExp(`^(.*?\\S)\\s+(?:vol\\.?|volume)\\s*${VOLUME}${SUBTITLE}$`, "i"),
-    new RegExp(`^(.*?\\S)\\s+(?:part|pt\\.?)\\s*${VOLUME}${SUBTITLE}$`, "i"),
-    // "... Season 3 ep.4: Subtitle". The episode keyword has to be
-    // recognised or nothing matches at all: the bare-number form needs
-    // whitespace before the digit and "ep.4" has a period there, so every
-    // episode became its own entry. Matching it groups a season together.
-    new RegExp(`^(.*?\\S)\\s+(?:ep\\.?|episode)\\s*${VOLUME}${SUBTITLE}$`, "i"),
-    new RegExp(`^(.*?\\S)\\s*#\\s*${VOLUME}${SUBTITLE}$`),
-    new RegExp(`^(.*?\\S)\\s+${VOLUME}${SUBTITLE}$`)
-  ];
-  var SEASON_EPISODE = new RegExp(`^(.*?\\S)\\s+season\\s*(\\d{1,2})\\s*(?:ep\\.?|episode)\\s*(\\d{1,3})${SUBTITLE}$`, "i");
   var COMPILATION = new RegExp("\\b(anthology|side stor(?:y|ies)|complete collection|collection|omnibus|bundle|box set)\\b", "i");
   var splitTitle = (title) => {
-    const trimmed = title.trim();
-    const seasonal = SEASON_EPISODE.exec(trimmed);
-    if (seasonal) {
-      const base = seasonal[1].replace(/[\s\-–—:,]+$/, "").trim();
-      if (base.length > 0) {
-        return { base, volume: Number(seasonal[2]) + Number(seasonal[3]) / 100 };
-      }
-    }
-    for (const pattern of VOLUME_PATTERNS) {
-      const match = pattern.exec(trimmed);
-      if (!match) continue;
-      const base = match[1].replace(/[\s\-–—:,]+$/, "").trim();
-      if (base.length > 0) return { base, volume: Number(match[2]) };
-    }
-    return { base: trimmed, volume: 1 };
+    const split = splitClean(title.trim(), false, false);
+    return { base: split.base, volume: split.volume };
   };
   var belongsToSeries = (title, base) => {
     const wanted = base.trim().toLowerCase();
@@ -15225,7 +15300,7 @@ ${description}`.trim() : description;
 
   // src/HentaiNexus/HentaiNexus.ts
   var HentaiNexusInfo = {
-    version: "1.8.0",
+    version: "1.9.0",
     name: "HentaiNexus",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15321,7 +15396,7 @@ Please go to the homepage of <${HentaiNexusInfo.name}> and press the cloud icon.
       const base = baseFromSeriesId(mangaId);
       const volumes = await this.fetchVolumes(base);
       if (volumes.length === 0) {
-        throw new Error(`No volumes found for "${base}".`);
+        throw new Error(nothingToShow(base, 0, false));
       }
       const $2 = await this.loadPage(`${HN_DOMAIN}/view/${volumes[0].id}`);
       return parseMangaDetails($2, mangaId, base, volumes.length);
