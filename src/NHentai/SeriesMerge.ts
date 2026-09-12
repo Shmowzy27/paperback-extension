@@ -285,6 +285,40 @@ export const sharesTail = (a: string, b: string): boolean => {
 }
 
 /**
+ * Every part of a title after its name. "Mesu no Ie - Married Woman's House
+ * ~Tsuma wa Midare Ubawareru~" has two: "Married Woman's House" and "Tsuma wa
+ * Midare Ubawareru".
+ */
+const subtitlesOf = (clean: string): string[] =>
+    clean.split(/\s+[-–—]\s+|:\s+|~|["“”「」『』]/).slice(1).map((part) => part.trim()).filter((part) => part.length > 0)
+
+/** Whether two phrases open with the same run of words, distinctive enough to name something. */
+const sharesOpening = (a: string, b: string): boolean => {
+    const x = keyWords(a)
+    const y = keyWords(b)
+    const run: string[] = []
+    for (let index = 0; index < Math.min(x.length, y.length); index++) {
+        if (x[index] !== y[index]) break
+        run.push(x[index] as string)
+    }
+    return distinctive(run)
+}
+
+/**
+ * Two books of one series under names that share no word, told apart only by a
+ * subtitle in the same form: AMAM's 雌ノ家 and 雌ノ宿, romanized "Mesu no Ie
+ * ~Tsuma wa Midare Ubawareru~" and "Mesunoyado ~Tsuma wa Midare Kegasareru~".
+ * Only ever asked of galleries by the same creator that the site itself tags
+ * as parts of a multi-work series; a subtitle that merely opens alike is not
+ * enough on its own.
+ */
+export const sharesSubtitle = (rawA: string, rawB: string): boolean => {
+    const a = subtitlesOf(cleanTitle(rawA) || rawA)
+    const b = subtitlesOf(cleanTitle(rawB) || rawB)
+    return a.some((x) => b.some((y) => sharesOpening(x, y)))
+}
+
+/**
  * A whole book's title up to its own subtitle, as a series key -- or '' when
  * what is left is too generic to tell one book from another by.
  */
@@ -447,6 +481,7 @@ export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: Fold
             seen.add(record)
             memo.remember(`k:${record}`, tileRef, FOLD_TTL)
             memo.remember(`q:${record}`, split.numbered, FOLD_TTL)
+            memo.remember(`u:${record}`, { raw: item.raw, multiWork: item.multiWork }, FOLD_TTL)
         }
     }
 
@@ -589,7 +624,8 @@ export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: Fold
             const other = series.find((candidate) => sharesCredit(candidate.creators, creators)
                 && (sharesTail(candidate.key, key)
                     || continues(candidate.key, key, numbered)
-                    || continues(key, candidate.key, candidate.numbered)))
+                    || continues(key, candidate.key, candidate.numbered)
+                    || (item.multiWork && candidate.own.multiWork && sharesSubtitle(candidate.own.raw, item.raw))))
             if (other != undefined) {
                 if (continues(key, other.key, other.numbered)) {
                     // This name is the series the tile's own name continues.
@@ -624,7 +660,9 @@ export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: Fold
 
                     const earlier = emitted.slice(bar + 1)
                     const earlierNumbered = memo.remembered<boolean>(`q:${emitted}`) ?? true
-                    if (!(sharesTail(earlier, key) || continues(earlier, key, numbered) || continues(key, earlier, earlierNumbered))) continue
+                    const earlierTitle = memo.remembered<{ raw: string; multiWork: boolean }>(`u:${emitted}`)
+                    if (!(sharesTail(earlier, key) || continues(earlier, key, numbered) || continues(key, earlier, earlierNumbered)
+                        || (item.multiWork && earlierTitle != undefined && earlierTitle.multiWork && sharesSubtitle(earlierTitle.raw, item.raw)))) continue
 
                     const tileRef = memo.remembered<string>(`k:${emitted}`)
                     if (tileRef != undefined && tileRef.startsWith('#')) {
@@ -661,7 +699,9 @@ export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: Fold
                 if (a === b) continue
 
                 const credited = sharesCredit(a.creators, b.creators)
-                const byCredit = credited && (continues(a.key, b.key, b.numbered) || (i < j && sharesTail(a.key, b.key)))
+                const byCredit = credited && (continues(a.key, b.key, b.numbered)
+                    || (i < j && sharesTail(a.key, b.key))
+                    || (i < j && a.own.multiWork && b.own.multiWork && sharesSubtitle(a.own.raw, b.own.raw)))
                 const byName = a.key.length < b.key.length && b.book && !a.book && sharesLead(a.key, b.key)
                 if (!byCredit && !byName) continue
 
@@ -689,6 +729,7 @@ export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: Fold
             seen.add(record)
             memo.remember(`k:${record}`, tileRef, FOLD_TTL)
             memo.remember(`q:${record}`, entry.numbered, FOLD_TTL)
+            memo.remember(`u:${record}`, { raw: entry.own.raw, multiWork: entry.own.multiWork }, FOLD_TTL)
         }
         // Every gallery the tile holds is a member, not only the name it shows:
         // a tile named for one arc that took in the series name must be
@@ -740,7 +781,8 @@ export const isLongName = (candidates: SeriesCandidate[], base: string): boolean
  * `numbered` whether its volume was read off its title at all.
  */
 export const volumeOf = (
-    candidate: SeriesCandidate, base: string, longName: boolean, sameArtist: boolean, trusted: boolean = false
+    candidate: SeriesCandidate, base: string, longName: boolean, sameArtist: boolean, trusted: boolean = false,
+    relatives: SeriesCandidate[] = []
 ): { belongs: boolean; volume: number; numbered: boolean; title: string; book: string } => {
     const wanted = seriesKey(base)
     const split = splitTitle(candidate.raw, candidate.multiWork)
@@ -751,6 +793,13 @@ export const volumeOf = (
         belongs = key.length > wanted.length ? !split.numbered : (longName && (split.numbered || sameArtist))
     }
     if (!belongs && sameArtist) belongs = sharesTail(key, wanted)
+
+    // A book of the same series under another name, told by its subtitle --
+    // Mesu no Ie beside Mesunoyado -- and only between galleries the site
+    // tags as parts of a multi-work series, from the artist's own works.
+    if (!belongs && sameArtist && candidate.multiWork) {
+        belongs = relatives.some((relative) => relative.multiWork && sharesSubtitle(relative.raw, candidate.raw))
+    }
 
     const title = cleanTitle(candidate.raw) || candidate.raw
     return {

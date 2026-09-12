@@ -50,7 +50,23 @@ const BANNED_CATEGORY_SLUGS = new Set(['Yaoi'])
  * table. (34 sits on every card everywhere, so it is a site-wide marker and no
  * signal at all.)
  */
-const BANNED_TAG_IDS = new Set(['27'])
+//
+// Every category the standing exclusions cover is here, not only Yaoi. With 27
+// alone, the rest -- Group Intercourse, Monster Girls, Threesome (MMF),
+// Tentacles, Crossdressing -- reached the listings and were refused only when
+// opened: 14 of 40 listing tiles did that. Each id was resolved the same way
+// as 27, from the site's own category listing, where it sits on 47 of the 48
+// cards (the 48th is a widget card that is not in the category).
+const BANNED_TAG_IDS = new Set([
+    '24', // Tentacles
+    '27', // Boy Love (Yaoi)
+    '311', // Group Intercourse
+    '343', // Crossdressing
+    '429', // Gang Rape
+    '462', // Gangbang
+    '1409', // Monster Girls
+    '1688' // Threesome (MMF)
+])
 
 /** Path segments that look like series slugs but are site pages. */
 const NOT_SERIES = new Set([
@@ -83,7 +99,7 @@ interface ListingMetadata {
  * read or land in the library.
  */
 export const Hentai2ReadInfo: SourceInfo = {
-    version: '1.4.2',
+    version: '1.5.0',
     name: 'Hentai2Read (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -173,7 +189,12 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
         // exclusion applies before anything reaches the reader. Search results
         // use a different, tagless card, which is why the details gate still
         // has to backstop everything.
-        const grid = $('div.book-grid-item-container[data-tags]').toArray()
+        //
+        // The Latest page renders a different card -- `li.js-lts-grp` -- that
+        // carries the same data-tags. Only the grid card was read here before,
+        // so every Latest tile came through the tagless path below, unfiltered:
+        // 14 of 40 listing tiles then refused to open.
+        const grid = $('div.book-grid-item-container[data-tags], li.js-lts-grp[data-tags]').toArray()
         for (const element of grid) {
             const card = $(element)
 
@@ -186,14 +207,25 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
                 if (!filters.include.every((id) => ids.includes(id))) continue
             }
 
-            const anchor = card.find('a[href^="https://hentai2read.com/"]').first()
+            const anchor = card.find('a.mangaPopover[href^="https://hentai2read.com/"]').first().length > 0
+                ? card.find('a.mangaPopover[href^="https://hentai2read.com/"]').first()
+                : card.find('a[href^="https://hentai2read.com/"]').first()
             const slug = /^https:\/\/hentai2read\.com\/([a-z0-9_]+)\/$/.exec(anchor.attr('href') ?? '')?.[1]
             if (slug == undefined || NOT_SERIES.has(slug) || seen.has(slug)) continue
 
-            const title = anchor.text().replace(/\s+/g, ' ').replace(/\[[^\]]*\]\s*$/, '').trim()
-            if (title.length === 0 || BANNED_LABELS.test(anchor.text())) continue
+            // A Latest card names its series in data-title; its text runs on
+            // into the rating and page count.
+            const rawTitle = anchor.attr('data-title') ?? anchor.text()
+            const title = rawTitle.replace(/\s+/g, ' ').replace(/\[[^\]]*\]\s*$/, '').trim()
+            if (title.length === 0 || BANNED_LABELS.test(rawTitle)) continue
 
-            const image = (card.find('img').first().attr('src') ?? '').trim()
+            // A Latest card's only image is a stand-in icon; the cover is at
+            // the same address every grid card's is, keyed on the series id.
+            let image = (card.find('img').first().attr('src') ?? '').trim()
+            const mid = card.attr('data-mid')
+            if ((image.length === 0 || image.includes('/img/other/')) && mid != undefined) {
+                image = `https://img1.hentaicdn.com/hentai/cover/_S${mid}.jpg`
+            }
 
             seen.add(slug)
             tiles.push(App.createPartialSourceManga({
@@ -300,13 +332,13 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
      * the site's nav menu carries a "Boy Love (Yaoi)" link on every page, and
      * a page-wide scan gated every single title because of it.
      */
-    private bannedFrom($: cheerio.CheerioAPI): boolean {
+    private bannedFrom($: cheerio.CheerioAPI): string | undefined {
         for (const element of $('ul.list-simple-mini a.tagButton[href*="/hentai-list/category/"]').toArray()) {
             const slug = decodeURIComponent(/\/hentai-list\/category\/([^/"]+)/.exec($(element).attr('href') ?? '')?.[1] ?? '')
             const label = $(element).text().trim()
-            if (BANNED_CATEGORY_SLUGS.has(slug) || BANNED_LABELS.test(label)) return true
+            if (BANNED_CATEGORY_SLUGS.has(slug) || BANNED_LABELS.test(label)) return label.length > 0 ? label : slug
         }
-        return false
+        return undefined
     }
 
     async getMangaDetails(mangaId: string): Promise<SourceManga> {
@@ -316,8 +348,9 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
         // The gate: the series' own category list decides. This is the layer
         // that actually holds on this site, since listings cannot be trusted
         // to carry the information.
-        if (this.bannedFrom($)) {
-            throw new Error('This title carries content excluded by your settings (BL/yaoi) and will not be shown.')
+        const banned = this.bannedFrom($)
+        if (banned != undefined) {
+            throw new Error(`This title is filed under "${banned}", which is excluded by your settings, and will not be shown.`)
         }
 
         const title = ($('meta[property="og:title"]').attr('content') ?? $('title').text())
@@ -365,8 +398,9 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
         const html = await this.fetchHtml(this.getMangaShareUrl(mangaId))
         const $ = cheerio.load(html)
 
-        if (this.bannedFrom($)) {
-            throw new Error('This title carries content excluded by your settings (BL/yaoi) and will not be shown.')
+        const banned = this.bannedFrom($)
+        if (banned != undefined) {
+            throw new Error(`This title is filed under "${banned}", which is excluded by your settings, and will not be shown.`)
         }
 
         const rows: { slug: string; number: number; name: string }[] = []

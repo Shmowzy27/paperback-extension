@@ -457,6 +457,32 @@ const seriesOffline = async () => {
     ])
     check('listing: a page whose series name comes after its arcs is one tile',
         ayanePage.length === 1 && ayanePage[0]?.mangaId === 's:Tonari no Ayane-san', ayanePage.map((t) => t.mangaId).join(' | '))
+
+    // ---- one series under two names: AMAM's 雌ノ家 and 雌ノ宿 ----
+    // "Mesunoyado" and "Mesu no Ie" share no word; the circle, the multi-work
+    // tag and the form of the subtitle -- "Tsuma wa Midare …" -- tie them.
+    const MESUNOYADO = '[AMAM (Ame Arare)] Mesunoyado ~Tsuma wa Midare Kegasareru~ [English] [SDTLs] [Digital]'
+    const IE_1 = '[AMAM (Ame Arare)] Mesu no Ie - Married Woman\'s House ~Tsuma wa Midare Ubawareru~ [English] [SDTLs] [Digital]'
+    const IE_2 = '[AMAM (Ame Arare)] Mesu no Ie II ~Tsuma wa Midare Ubareru~ [English] [SDTLs] [Digital]'
+    const IE_3 = '[AMAM (Ame Arare)] Mesu no Ie III ~Oyako wa Midare Aisareru~ [English] [SDTLs] [Digital]'
+    check('sharesSubtitle: Mesunoyado and Mesu no Ie I and II open their subtitles alike',
+        Sources.sharesSubtitle(MESUNOYADO, IE_1) && Sources.sharesSubtitle(MESUNOYADO, IE_2))
+    check('sharesSubtitle: but not with "Oyako wa Midare …" (III)', !Sources.sharesSubtitle(MESUNOYADO, IE_3))
+
+    const amamPage = tilesOf([[MESUNOYADO, true], [IE_1, true], [IE_2, true]])
+    check('listing: one series under two names, same circle, both tagged -> 1 tile',
+        amamPage.length === 1, amamPage.map((t) => t.mangaId).join(' | '))
+    const untagged = tilesOf([[MESUNOYADO, false], [IE_2, false]])
+    check('listing: the same names untagged stay two -- the subtitle alone is not enough',
+        untagged.length === 2, untagged.map((t) => t.mangaId).join(' | '))
+
+    // Opened: the name search finds only Mesunoyado; Mesu no Ie comes from the
+    // artist's works, by its subtitle. III carries "group" and stays out.
+    const amamOpened = await fakeSeries([listed(51, MESUNOYADO, [EN, MWS])], [
+        listed(52, IE_1, [EN, MWS]), listed(53, IE_2, [EN, MWS]), listed(54, IE_3, [EN, MWS, GROUP])
+    ]).getChapters('s:Mesunoyado')
+    check('series: Mesunoyado opens with Mesu no Ie I and II, and not the excluded III',
+        idsOf(amamOpened) === '51,52,53', amamOpened.map((c) => `${c.chapNum}:${c.id}`).join(' '))
 }
 
 if (!LIVE) {

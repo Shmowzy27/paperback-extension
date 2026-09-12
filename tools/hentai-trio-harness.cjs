@@ -134,8 +134,13 @@ const expectGateThrow = async (label, fn) => {
             sections.length === 3 && sections.every((x) => Array.isArray(x.items) && x.items.length > 0),
             sections.map((x) => `${x.title}:${x.items?.length}`).join(', '))
 
-        const more = await s.getViewMoreItems('new', { page: 2, seen: sections[0].items.map((t) => t.mangaId) })
-        const all = sections[0].items.map((t) => t.mangaId).concat(more.results.map((t) => t.mangaId))
+        // Paged the way the app pages: page 1 of the section, then page 2 with
+        // the metadata page 1 handed back. The source's `seen` records are its
+        // own; seeding it with tile ids, as this once did, is not what the app
+        // sends, and let a series straddling the two pages repeat.
+        const first = await s.getViewMoreItems('new', undefined)
+        const more = await s.getViewMoreItems('new', first.metadata)
+        const all = first.results.map((t) => t.mangaId).concat(more.results.map((t) => t.mangaId))
         check('listing paginates without duplicate ids',
             more.results.length > 0 && new Set(all).size === all.length,
             `${all.length} items, ${new Set(all).size} unique`)
@@ -213,24 +218,34 @@ const expectGateThrow = async (label, fn) => {
         // of its tags, so a rarer parody can still reach a tile and refuse on
         // open; that is the documented trade, and it is why a few candidates
         // are tried and the refusals counted rather than one being demanded.
+        // A series tile can legitimately open with one volume: the site's
+        // multi-work tag makes a gallery a series, and its siblings may all be
+        // excluded or not in English ("Aimai na Bokura" keeps only book 2). So
+        // the subject is the first series tile that actually holds several.
         let subject
         let merged
         let refused = 0
-        for (const candidate of seriesTiles.slice(0, 3)) {
+        let singles = 0
+        for (const candidate of seriesTiles.slice(0, 4)) {
             try {
-                merged = await s.getMangaDetails(candidate)
+                const details = await s.getMangaDetails(candidate)
+                if ((await s.getChapters(candidate)).length < 2) {
+                    singles++
+                    continue
+                }
+                merged = details
                 subject = candidate
                 break
             } catch (error) {
-                if (!/excluded by your settings|is a parody/i.test(error.message)) throw error
+                if (!/excluded by your settings|is a parody|can be shown/i.test(error.message)) throw error
                 refused++
             }
         }
 
         if (subject == undefined) {
-            note('no merged series from this listing would open', `${refused} refused by the exclusions`)
+            note('no series tile on this listing held several volumes', `${refused} refused by the exclusions, ${singles} with one volume allowed`)
         } else {
-            if (refused > 0) note('merged series refused before one opened', `${refused}`)
+            if (refused + singles > 0) note('series tiles passed over first', `${refused} refused, ${singles} with one volume allowed`)
             check('a merged series opens under its series name',
                 merged.mangaInfo.titles[0] === subject.slice(2),
                 `"${merged.mangaInfo.titles[0]}"`)

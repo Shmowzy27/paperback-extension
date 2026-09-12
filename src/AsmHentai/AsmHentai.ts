@@ -218,7 +218,7 @@ interface CardRow {
  * English are dropped the same way, on the cards' language ids.
  */
 export const AsmHentaiInfo: SourceInfo = {
-    version: '1.6.1',
+    version: '1.6.2',
     name: 'AsmHentai (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -600,7 +600,7 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
             for (const row of rows) {
                 if (found.has(row.galleryId)) continue
 
-                const verdict = volumeOf(row, base, longName, sameArtist, trusted)
+                const verdict = volumeOf(row, base, longName, sameArtist, trusted, members)
                 if (!verdict.belongs || books.has(verdict.book)) continue
                 books.add(verdict.book)
 

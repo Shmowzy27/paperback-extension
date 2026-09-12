@@ -166,7 +166,7 @@ import {
     splitTitle,
     volumeOf
 } from './SeriesMerge'
-export { cleanTitle, creatorOf, creatorsOf, seriesKey, sharesLead, sharesTail, splitTitle } from './SeriesMerge'
+export { cleanTitle, creatorOf, creatorsOf, seriesKey, sharesSubtitle, sharesLead, sharesTail, splitTitle } from './SeriesMerge'
 
 const SERIES_PREFIX = 's:'
 export const seriesIdFor = (title: string): string => `${SERIES_PREFIX}${splitTitle(title).base}`
@@ -250,7 +250,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '2.4.0',
+    version: '2.4.1',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -268,6 +268,13 @@ export const NHentaiInfo: SourceInfo = {
 }
 
 export class NHentai implements SearchResultsProviding, MangaProviding, ChapterProviding, HomePageSectionsProviding, CloudflareBypassRequestProviding {
+    /**
+     * The name the source calls itself in messages. A property rather than
+     * NHentaiInfo.name read directly, so a source built on this one -- "nhentai
+     * (new)" -- names itself, not this one.
+     */
+    protected readonly displayName: string = NHentaiInfo.name
+
     requestManager = App.createRequestManager({
         // The documented anonymous ceiling is fifteen requests a minute, but
         // measuring it says otherwise: at exactly that rate the API starts
@@ -322,7 +329,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
 
     private checkResponse(status: number): void {
         if (status === 403 || status === 503) {
-            throw new Error(`CLOUDFLARE BYPASS ERROR:\nPlease go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`)
+            throw new Error(`CLOUDFLARE BYPASS ERROR:\nPlease go to the homepage of <${this.displayName}> and press the cloud icon.`)
         }
         if (status === 429) {
             throw new Error('nhentai is rate limiting this connection (HTTP 429). It allows about ten requests a minute and clears after sixty seconds -- wait a minute, then pull to refresh.')
@@ -584,11 +591,12 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         )).result ?? []
         const longName = isLongName(byName.map(candidate), base)
 
+        const members: { raw: string; multiWork: boolean }[] = []
         const consider = (entries: ApiListing[], sameArtist: boolean, trusted: boolean = false): void => {
             for (const entry of entries) {
                 if (found.has(entry.id)) continue
 
-                const verdict = volumeOf(candidate(entry), base, longName, sameArtist, trusted)
+                const verdict = volumeOf(candidate(entry), base, longName, sameArtist, trusted, members)
                 if (!verdict.belongs) continue
 
                 if (!this.admitted(entry.tag_ids, parodies)) {
@@ -599,6 +607,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                 books.add(verdict.book)
 
                 found.set(entry.id, { id: entry.id, title: verdict.title, volume: verdict.volume, numbered: verdict.numbered })
+                members.push(candidate(entry))
             }
         }
 
