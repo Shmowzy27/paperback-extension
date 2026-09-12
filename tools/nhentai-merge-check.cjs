@@ -188,6 +188,41 @@ for (const [label, rows, expected] of COLLAPSES) {
         tiles.map((t) => `${t.mangaId.slice(0, 40)}`).join(' | '))
 }
 
+// ---- one series, every volume leading with a title of its own ----
+// The maintainer's report: searching "Marked-girls Origin" showed four Origin
+// tiles and "Jigo Houkoku" two. These are the real raw titles, credits and all,
+// because the credit is what tells the listing they are one creator's series.
+check('creatorOf reads the credit past an event prefix',
+    Sources.creatorOf('(SC2018 Autumn) [Marked-two (Suga Hideo)] Netoria Marked-girls Origin Vol. 2 [English]') === 'marked two suga hideo'
+        && Sources.creatorOf('[Marked-Two (Suga Hideo)] Marked-girls Origin Vol. 11') === 'marked two suga hideo',
+    Sources.creatorOf('(SC2018 Autumn) [Marked-two (Suga Hideo)] Netoria Marked-girls Origin Vol. 2 [English]'))
+const SAME_CREATOR = [
+    ['the Origin volumes, each under its own title',
+        [['(SC2018 Autumn) [Marked-two (Suga Hideo)] Netoria Marked-girls Origin Vol. 2 [English] [ScanMTL]', false],
+            ['(C97) [Marked-two (Suga Hideo)] pa:Costa Del Sol Marked girls Origin Vol. 4 [English] [ScanMTL]', false],
+            ['[Marked-Two (Suga Hideo)] Hi.Mi.Tsu.Ma Marked-girls Origin Vol. 5 [English]', false],
+            ['[Marked-two (Suga Hideo)] Netori Esthe Marked-girls Origin Vol. 7 [English]', false]], 1],
+    ['NTR Jigo Houkoku and its differently titled first book',
+        [['[Mint no Chicchai Oana (Mint Muzzlini)] Toxic JK Netorare Jigo Houkoku... [English] [Solid Rose]', false],
+            ['[Mint no Chicchai Oana (Mint Muzzlini)] NTR Jigo Houkoku 2 After [English]', true]], 1],
+    // Must stay apart.
+    ['the circle\'s main, Origin and Collection lines',
+        [['[Marked-two (Suga Hideo)] Marked-girls Vol. 5 [English]', false],
+            ['[Marked-two (Suga Hideo)] Netoria Marked-girls Origin Vol. 2 [English]', false],
+            ['[Marked-two (Suga Hideo)] Marked-girls Collection Vol. 3 [English]', false]], 3],
+    ['different creators whose titles end alike',
+        [['[Circle A (Artist A)] Hitozuma Choukyou Nikki [English]', false], ['[Circle B (Artist B)] Imouto Choukyou Nikki [English]', false]], 2]
+]
+for (const [label, rows, expected] of SAME_CREATOR) {
+    const tiles = tilesOf(rows)
+    check(`listing: ${label} -> ${expected} tile(s)`, tiles.length === expected,
+        tiles.map((t) => `${t.mangaId.slice(0, 44)}`).join(' | '))
+    // A merged tile has to open as a series; a bare gallery id opens as one book.
+    if (expected === 1) {
+        check(`listing: ${label} opens as a series`, tiles[0]?.mangaId.startsWith('s:') === true, tiles[0]?.mangaId)
+    }
+}
+
 // The same, with the pair a page apart -- the way the app actually scrolls,
 // carrying one `seen` set from page to page.
 const tilesAcross = (pages) => {
@@ -207,7 +242,21 @@ const ACROSS = [
     ['an opener a page before its numbered volume',
         [[['Aimai na Bokura Kanojo wa Tabun, Korekara Mechakucha Sex Suru', true]], [['Aimai na Bokura 2 Kanojo wa Tabun, Korekara Mechakucha Sex Suru', true]]], 1],
     ['two different books a page apart', [[['Hitozuma Kyoushi', false]], [['Hitozuma Kyoushi no Himitsu', false]]], 2],
-    ['a numbered sub-line a page after the main line', [[['Marked-girls Vol. 5', false]], [['Marked-girls Collection Vol. 3', false]]], 2]
+    ['a numbered sub-line a page after the main line', [[['Marked-girls Vol. 5', false]], [['Marked-girls Collection Vol. 3', false]]], 2],
+    // Same creator, same ending, a page apart. With the series tile first, the
+    // later first book folds into it. The other way round it cannot: the first
+    // book is already on screen as a single book by the time its series turns
+    // up, and a tile cannot be taken back -- so the series tile still appears,
+    // since it is the one that opens every volume.
+    ['a series tile, then its differently titled first book a page later',
+        [[['[Mint no Chicchai Oana (Mint Muzzlini)] NTR Jigo Houkoku 2 After [English]', true]],
+            [['[Mint no Chicchai Oana (Mint Muzzlini)] Toxic JK Netorare Jigo Houkoku... [English]', false]]], 1],
+    ['a first book, then its series tile a page later',
+        [[['[Mint no Chicchai Oana (Mint Muzzlini)] Toxic JK Netorare Jigo Houkoku... [English]', false]],
+            [['[Mint no Chicchai Oana (Mint Muzzlini)] NTR Jigo Houkoku 2 After [English]', true]]], 2],
+    ['Origin volumes a page apart',
+        [[['(SC2018 Autumn) [Marked-two (Suga Hideo)] Netoria Marked-girls Origin Vol. 2 [English]', false]],
+            [['(C97) [Marked-two (Suga Hideo)] pa:Costa Del Sol Marked girls Origin Vol. 4 [English]', false]]], 1]
 ]
 for (const [label, pages, expected] of ACROSS) {
     const tiles = tilesAcross(pages)
@@ -266,6 +315,23 @@ const seriesOffline = async () => {
     await refusal('series: a series with nothing in English says so',
         () => fakeSeries([], []).getChapters('s:Nothing Like This Exists'),
         /English galleries only/i)
+
+    // A tile opens with everything the listing folded into it, even volumes
+    // the artist search cannot reach -- it reads one page, and Marked-two's
+    // older Origin volumes are past it. The failure this guards against: the
+    // listing folded Hi.Mi.Tsu.Ma and Netori Esthe into the Origin tile, and
+    // opening the tile showed neither, so they had simply vanished.
+    const ORIGIN_2 = listed(11, '(SC2018 Autumn) [Marked-two (Suga Hideo)] Netoria Marked-girls Origin Vol. 2 [English]', [EN])
+    const ORIGIN_5 = listed(13, '[Marked-Two (Suga Hideo)] Hi.Mi.Tsu.Ma Marked-girls Origin Vol. 5 [English]', [EN])
+    const ORIGIN_7 = listed(14, '[Marked-two (Suga Hideo)] Netori Esthe Marked-girls Origin Vol. 7 [English]', [EN])
+    const lister = fakeSeries([ORIGIN_2], [])
+    const [originTile] = lister.tilesFrom([ORIGIN_2, ORIGIN_5], new Set(), undefined)
+    const originSeen = new Set()
+    lister.tilesFrom([ORIGIN_2, ORIGIN_5], originSeen, undefined)
+    lister.tilesFrom([ORIGIN_7], originSeen, undefined)
+    const opened = await lister.getChapters(originTile.mangaId)
+    check('series: a tile opens with every volume the listing folded into it, on one page or across pages',
+        idsOf(opened) === '11,13,14', `${originTile.mangaId} -> ${opened.map((c) => `${c.chapNum}:${c.id}`).join(' ')}`)
 }
 
 if (!LIVE) {

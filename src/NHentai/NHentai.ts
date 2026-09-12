@@ -395,6 +395,20 @@ const bookRoot = (clean: string): string => {
     return distinctive(root.split(' ').filter((word) => word.length > 0)) ? root : ''
 }
 
+/**
+ * The circle and artist a gallery is credited to, "[Marked-two (Suga Hideo)]",
+ * read off the front of its raw title and normalised so "Marked-Two" and
+ * "Marked-two" agree. Event prefixes such as "(C97)" come first and are
+ * skipped. '' when the title credits no one.
+ *
+ * A listing entry carries its tags only as bare ids, so this is how two tiles
+ * can be known to be the same people's work without a request.
+ */
+export const creatorOf = (raw: string): string => {
+    const match = /^\s*(?:\([^)]*\)\s*)*\[([^\]]+)\]/.exec(raw)
+    return match ? seriesKey(match[1] as string) : ''
+}
+
 const SERIES_PREFIX = 's:'
 export const seriesIdFor = (title: string): string => `${SERIES_PREFIX}${splitTitle(title).base}`
 export const isSeriesId = (mangaId: string): boolean => mangaId.startsWith(SERIES_PREFIX)
@@ -477,7 +491,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '2.1.0',
+    version: '2.2.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -740,7 +754,14 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
      * never fold into "Marked-girls".
      */
     private tilesFrom(entries: ApiListing[], seen: Set<string>, parodies?: Set<number>): PartialSourceManga[] {
-        const series: { key: string; id: string; title: string; volume: number; thumb: string; book: boolean; clean: string }[] = []
+        // `own` is the entry a tile was made from and `folded` every other
+        // entry merged into it on this page; both are handed to the series
+        // when the tile is shown, so opening it gathers exactly what it stood
+        // for (see foldInto).
+        const series: {
+            key: string; id: string; title: string; volume: number; thumb: string
+            book: boolean; clean: string; creator: string; own: ApiListing; folded: ApiListing[]
+        }[] = []
 
         for (const entry of entries) {
             if (!this.admitted(entry.tag_ids, parodies)) continue
@@ -749,6 +770,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             const { base, volume, marked, numbered } = splitTitle(raw, isMultiWork(entry.tag_ids))
             const thumb = (entry.thumbnail ?? '').replace(/^\/+/, '')
             const clean = cleanTitle(raw) || raw
+            const creator = creatorOf(raw)
 
             // Whether this name is one book's own full title, as opposed to a
             // series name -- read off a numbered volume, or cut from a longer
@@ -781,9 +803,13 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                     same.volume = volume
                     same.thumb = thumb
                 }
+                same.folded.push(entry)
                 continue
             }
-            if (seen.has(`t:${key}`) || seen.has(`n:${key}`)) continue
+            if (seen.has(`t:${key}`) || seen.has(`n:${key}`)) {
+                this.foldInto(this.remembered<string>(`k:t:${key}`) ?? this.remembered<string>(`k:n:${key}`), [entry])
+                continue
+            }
 
             // A book's root is its title up to its own subtitle. Two books with
             // one root are one book uploaded twice -- "Boku no Mizugi ga
@@ -824,12 +850,16 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                     // Himitsu" have different roots: two books, and they stay two.
                     folded = root.length > 0 && bookRoot(other.clean) === root
                 }
-                if (folded) break
+                if (folded) {
+                    other.folded.push(entry)
+                    break
+                }
             }
             if (!folded) {
                 for (const emitted of seen) {
-                    // Roots are a record of their own, not names to fold into.
-                    if (emitted.startsWith('r:')) continue
+                    // Roots and creator records are records of their own, not
+                    // names to fold into.
+                    if (emitted.startsWith('r:') || emitted.startsWith('a:')) continue
                     const other = emitted.slice(2)
                     if (!sharesLead(other, key)) continue
 
@@ -839,14 +869,56 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                     const otherIsBook = emitted.startsWith('n:')
                     if ((key.length > other.length && book && !otherIsBook)
                         || (key.length < other.length && !book && otherIsBook)) {
+                        this.foldInto(this.remembered<string>(`k:${emitted}`), [entry])
                         folded = true
                         break
                     }
                 }
             }
+
+            // Same creator, same distinctive ending: one series whose every
+            // volume leads with a title of its own -- "Netoria Marked-girls
+            // Origin" and "pa:Costa Del Sol Marked girls Origin", or "Toxic JK
+            // Netorare Jigo Houkoku" and "NTR Jigo Houkoku 2 After". The ending
+            // alone would be far too loose -- "…Choukyou Nikki" ends any number
+            // of unrelated books -- so the credit has to match as well.
+            if (!folded && creator.length > 0) {
+                const other = series.find((candidate) => candidate.creator === creator && sharesTail(candidate.key, key))
+                if (other != undefined) {
+                    // The merged tile has to open as a series: a bare gallery id
+                    // opens as the one book it names.
+                    if (!other.id.startsWith('s:')) {
+                        other.id = marked ? `s:${base}` : `s:${other.title}`
+                        if (marked) other.title = base
+                    }
+                    other.book = false
+                    if (volume < other.volume) {
+                        other.volume = volume
+                        other.thumb = thumb
+                    }
+                    other.folded.push(entry)
+                    folded = true
+                } else {
+                    // A series tile from an earlier page already stands for this
+                    // one. Only series tiles are recorded: a plain gallery shown
+                    // earlier cannot be turned into its series after the fact,
+                    // so in that order the series tile still has to appear.
+                    const prefix = `a:${creator}|`
+                    for (const emitted of seen) {
+                        if (emitted.startsWith(prefix) && sharesTail(emitted.slice(prefix.length), key)) {
+                            this.foldInto(this.remembered<string>(`k:${emitted}`), [entry])
+                            folded = true
+                            break
+                        }
+                    }
+                }
+            }
             if (folded) continue
 
-            series.push({ key: key, id: id, title: title, volume: volume, thumb: thumb, book: book, clean: clean })
+            series.push({
+                key: key, id: id, title: title, volume: volume, thumb: thumb,
+                book: book, clean: clean, creator: creator, own: entry, folded: []
+            })
         }
 
         const tiles: PartialSourceManga[] = []
@@ -854,6 +926,20 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             const key = `${entry.book ? 'n' : 't'}:${entry.key}`
             if (seen.has(key)) continue
             seen.add(key)
+
+            // A series tile hands everything folded into it to the series it
+            // opens as, and the records a later page's fold is matched against
+            // learn which series they stand for.
+            if (entry.id.startsWith('s:')) {
+                const tileKey = seriesKey(entry.id.slice(2))
+                this.foldInto(tileKey, [entry.own, ...entry.folded])
+                this.remember(`k:${key}`, tileKey, 1800000)
+                if (entry.creator.length > 0) {
+                    const record = `a:${entry.creator}|${entry.key}`
+                    seen.add(record)
+                    this.remember(`k:${record}`, tileKey, 1800000)
+                }
+            }
 
             tiles.push(App.createPartialSourceManga({
                 mangaId: entry.id,
@@ -866,11 +952,25 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
     }
 
     /**
+     * Hands listing entries to the series a tile opens as, remembered under the
+     * series' key -- which is where volumesOf looks -- for half an hour, the
+     * same as the listing entries themselves.
+     */
+    private foldInto(tileKey: string | undefined, entries: ApiListing[]): void {
+        if (tileKey == undefined || entries.length === 0) return
+
+        const list = this.remembered<ApiListing[]>(`f:${tileKey}`) ?? []
+        for (const entry of entries) {
+            if (!list.some((known) => known.id === entry.id)) list.push(entry)
+        }
+        this.remember(`f:${tileKey}`, list, 1800000)
+    }
+
+    /**
      * Every gallery belonging to `base`, ordered by volume.
      *
      * The first search is for the name itself, which finds every volume that
-     * leads with it. When that finds only one, or the site tags the work as a
-     * multi-work series, the artist's own English catalogue is searched as
+     * leads with it. Then the artist's own English catalogue is searched as
      * well: that is where the volumes that lead with a title of their own are
      * -- the "COSBITCH!", "Netoria" and "TotonoIki!" books of Marked-girls
      * Origin, or the first NTR Jigo Houkoku, published as "Toxic JK Netorare
@@ -941,8 +1041,19 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
 
         consider(byName, false)
 
-        const expand = found.size < 2 || Array.from(found.values()).some((volume) => volume.multiWork)
-        if (expand && found.size > 0) {
+        // Every gallery the listing folded into this tile. The artist search
+        // below reads one page, the artist's twenty-five newest works; for a
+        // circle as prolific as Marked-two, the older Origin volumes are past
+        // it -- and a volume the listing had folded away, but that the open
+        // could not find, simply vanished. What a tile stood for in the listing
+        // is what it opens with, at no cost: the entries are already in hand.
+        consider(this.remembered<ApiListing[]>(`f:${wanted}`) ?? [], true)
+
+        // Always, now that listings merge a creator's volumes by their shared
+        // ending: a tile built that way has to open with every volume it stands
+        // for, even when its own name search already found two. It costs one
+        // request when a series is opened, never while browsing.
+        if (found.size > 0) {
             try {
                 const first = Array.from(found.values()).sort((a, b) => a.volume - b.volume)[0] as { id: number }
                 const tags = (await this.gallery(first.id)).tags ?? []
