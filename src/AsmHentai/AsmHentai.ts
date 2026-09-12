@@ -142,6 +142,7 @@ const CATALOG_LETTERS = 'abcdefghijklmnopqrstuvwxyz'.split('').concat(['num'])
  */
 import {
     cleanTitle,
+    creatorsOf,
     FoldItem,
     FoldMemo,
     foldedInto,
@@ -162,6 +163,17 @@ export { cleanTitle, splitTitle } from '../NHentai/SeriesMerge'
  */
 const MULTI_WORK_TAG_ID = '25'
 
+/** A card's artist and group, as the ids its own attributes carry. */
+const creditIdsOf = (card: { attr: (name: string) => string | undefined }): string[] => {
+    const ids: string[] = []
+    for (const [attribute, type] of [['data-artists', 'artist'], ['data-groups', 'group']] as [string, string][]) {
+        for (const id of (card.attr(attribute) ?? '').split(/\s+/)) {
+            if (id.length > 0) ids.push(`${type}:${id}`)
+        }
+    }
+    return ids
+}
+
 export const isSeriesId = (mangaId: string): boolean => mangaId.startsWith(SERIES_PREFIX)
 export const baseFromSeriesId = (mangaId: string): string => mangaId.slice(SERIES_PREFIX.length)
 
@@ -176,6 +188,8 @@ interface CardRow {
     raw: string
     /** Tagged by the site as part of a multi-work series. */
     multiWork: boolean
+    /** Its artist and group ids, and every name those are known by. */
+    creators: string[]
     base: string
     title: string
     volume: number
@@ -204,7 +218,7 @@ interface CardRow {
  * English are dropped the same way, on the cards' language ids.
  */
 export const AsmHentaiInfo: SourceInfo = {
-    version: '1.6.0',
+    version: '1.6.1',
     name: 'AsmHentai (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -348,6 +362,23 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
     private parseCards($: CheerioAPI): CardRow[] {
         const rows: CardRow[] = []
 
+        // What an artist or group id is called, learned from every card on the
+        // page whatever its language: one that shows both a caption credit and
+        // an id says what that id is called. AsmHentai lists "NTR Jigo Houkoku
+        // 2 After" with only a group id and "Toxic JK Netorare Jigo Houkoku"
+        // with only a caption credit; its Chinese upload of the latter carries
+        // both, which is how the two English books are known to be one circle's.
+        for (const element of $('div.preview_item').toArray()) {
+            const card = $(element)
+            const names = creatorsOf(card.find('h2.caption').first().text().replace(/\s+/g, ' ').trim())
+            if (names.length === 0) continue
+
+            for (const id of creditIdsOf(card)) {
+                const known = this.remembered<string[]>(`c:${id}`) ?? []
+                this.remember(`c:${id}`, known.concat(names.filter((name) => !known.includes(name))), 3600000)
+            }
+        }
+
         for (const element of $('div.preview_item').toArray()) {
             const card = $(element)
 
@@ -385,10 +416,18 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
             const parodies = (card.attr('data-parodies') ?? '').split(/\s+/).filter((id) => id.length > 0)
             if (parodies.some((id) => id !== ORIGINAL_PARODY_ID)) continue
 
+            const creators = creditIdsOf(card)
+            for (const id of creators.slice()) {
+                for (const name of this.remembered<string[]>(`c:${id}`) ?? []) {
+                    if (!creators.includes(name)) creators.push(name)
+                }
+            }
+
             rows.push({
                 galleryId: galleryId,
                 raw: raw,
                 multiWork: multiWork,
+                creators: creators,
                 base: base,
                 title: marked ? base : (cleanTitle(raw) || raw),
                 volume: volume,
@@ -414,9 +453,9 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
             raw: row.raw,
             thumb: row.thumb,
             multiWork: row.multiWork,
-            // The card names its artist and group by id, which holds even when
-            // the caption credits no one or the circle alone.
-            creators: row.annotations.filter((annotation) => annotation.startsWith('artist:') || annotation.startsWith('group:')),
+            // The card's artist and group ids, and the names they are known by
+            // -- which hold even when the caption credits no one.
+            creators: row.creators,
             payload: row
         }))
 
@@ -556,6 +595,7 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
         const byName = this.parseCards(await this.loadPage(this.searchUrl(base, 1)))
         const longName = isLongName(byName, base)
 
+        const members: CardRow[] = []
         const consider = (rows: CardRow[], sameArtist: boolean, trusted: boolean = false): void => {
             for (const row of rows) {
                 if (found.has(row.galleryId)) continue
@@ -565,6 +605,7 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
                 books.add(verdict.book)
 
                 found.set(row.galleryId, { id: row.galleryId, title: verdict.title, volume: verdict.volume, numbered: verdict.numbered })
+                members.push(row)
             }
         }
 
@@ -583,6 +624,30 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
                 }
             } catch {
                 // The name search and the listing's folds still stand.
+            }
+        }
+
+        // An upload the site never tagged with its artist or group is not on
+        // that listing -- AsmHentai's English "Toxic JK Netorare Jigo Houkoku"
+        // is credited only in its caption. So the credit's own name is
+        // searched as well, and a result joins only if it is credited to the
+        // same people and its name is related to the series.
+        if (found.size > 0) {
+            const credits: string[] = []
+            for (const row of members) {
+                for (const name of creatorsOf(row.raw).concat(row.creators)) {
+                    if (!credits.includes(name)) credits.push(name)
+                }
+            }
+
+            for (const name of credits.filter((credit) => !credit.includes(':')).slice(0, 2)) {
+                try {
+                    const rows = this.parseCards(await this.loadPage(this.searchUrl(name, 1)))
+                        .filter((row) => creatorsOf(row.raw).concat(row.creators).some((credit) => credits.includes(credit)))
+                    consider(rows, true)
+                } catch {
+                    // One search fewer; the rest still stand.
+                }
             }
         }
 
