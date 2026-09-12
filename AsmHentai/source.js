@@ -15482,10 +15482,19 @@ var _Sources = (() => {
   ];
   var CATALOG_LETTERS = "abcdefghijklmnopqrstuvwxyz".split("").concat(["num"]);
   var MULTI_WORK_TAG_ID = "25";
+  var creditIdsOf = (card) => {
+    const ids = [];
+    for (const [attribute, type] of [["data-artists", "artist"], ["data-groups", "group"]]) {
+      for (const id of (card.attr(attribute) ?? "").split(/\s+/)) {
+        if (id.length > 0) ids.push(`${type}:${id}`);
+      }
+    }
+    return ids;
+  };
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
   var AsmHentaiInfo = {
-    version: "1.6.0",
+    version: "1.6.1",
     name: "AsmHentai (English)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15620,6 +15629,15 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
       const rows = [];
       for (const element of $2("div.preview_item").toArray()) {
         const card = $2(element);
+        const names = creatorsOf(card.find("h2.caption").first().text().replace(/\s+/g, " ").trim());
+        if (names.length === 0) continue;
+        for (const id of creditIdsOf(card)) {
+          const known = this.remembered(`c:${id}`) ?? [];
+          this.remember(`c:${id}`, known.concat(names.filter((name) => !known.includes(name))), 36e5);
+        }
+      }
+      for (const element of $2("div.preview_item").toArray()) {
+        const card = $2(element);
         const languages = (card.attr("data-languages") ?? "").split(/\s+/).filter((id) => id.length > 0);
         if (!languages.includes(ENGLISH_LANGUAGE_ID)) continue;
         const tagIds = (card.attr("data-tags") ?? "").split(/\s+/).filter((id) => id.length > 0);
@@ -15640,10 +15658,17 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
         }
         const parodies = (card.attr("data-parodies") ?? "").split(/\s+/).filter((id) => id.length > 0);
         if (parodies.some((id) => id !== ORIGINAL_PARODY_ID)) continue;
+        const creators = creditIdsOf(card);
+        for (const id of creators.slice()) {
+          for (const name of this.remembered(`c:${id}`) ?? []) {
+            if (!creators.includes(name)) creators.push(name);
+          }
+        }
         rows.push({
           galleryId,
           raw,
           multiWork,
+          creators,
           base,
           title: marked ? base : cleanTitle(raw) || raw,
           volume,
@@ -15667,9 +15692,9 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
         raw: row.raw,
         thumb: row.thumb,
         multiWork: row.multiWork,
-        // The card names its artist and group by id, which holds even when
-        // the caption credits no one or the circle alone.
-        creators: row.annotations.filter((annotation) => annotation.startsWith("artist:") || annotation.startsWith("group:")),
+        // The card's artist and group ids, and the names they are known by
+        // -- which hold even when the caption credits no one.
+        creators: row.creators,
         payload: row
       }));
       return foldTiles(items, seen, this.foldMemo).map((tile) => App.createPartialSourceManga({
@@ -15772,6 +15797,7 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
       const books = /* @__PURE__ */ new Set();
       const byName = this.parseCards(await this.loadPage(this.searchUrl(base, 1)));
       const longName = isLongName(byName, base);
+      const members = [];
       const consider = (rows, sameArtist, trusted = false) => {
         for (const row of rows) {
           if (found.has(row.galleryId)) continue;
@@ -15779,6 +15805,7 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
           if (!verdict.belongs || books.has(verdict.book)) continue;
           books.add(verdict.book);
           found.set(row.galleryId, { id: row.galleryId, title: verdict.title, volume: verdict.volume, numbered: verdict.numbered });
+          members.push(row);
         }
       };
       consider(byName, false);
@@ -15794,6 +15821,21 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
             consider(this.parseCards(await this.loadPage(`${ASM_DOMAIN}/${type}/${creator.slug}/`)), true);
           }
         } catch {
+        }
+      }
+      if (found.size > 0) {
+        const credits = [];
+        for (const row of members) {
+          for (const name of creatorsOf(row.raw).concat(row.creators)) {
+            if (!credits.includes(name)) credits.push(name);
+          }
+        }
+        for (const name of credits.filter((credit) => !credit.includes(":")).slice(0, 2)) {
+          try {
+            const rows = this.parseCards(await this.loadPage(this.searchUrl(name, 1))).filter((row) => creatorsOf(row.raw).concat(row.creators).some((credit) => credits.includes(credit)));
+            consider(rows, true);
+          } catch {
+          }
         }
       }
       const volumes = orderVolumes(Array.from(found.values()));
