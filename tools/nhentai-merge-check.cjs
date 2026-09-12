@@ -422,6 +422,41 @@ const seriesOffline = async () => {
     check('series: an arc, its series name and a second arc, a page apart each, are one tile that opens with all three',
         chainLater.length === 0 && idsOf(chainOpened) === '21,22,23',
         `${chainLater.length} later tile(s) ${chainLater.map((t) => t.mangaId).join(' | ')}; ${chainTile.mangaId} -> ${idsOf(chainOpened)}`)
+
+    // None of those books carries a number, so they are numbered off in upload
+    // order -- every chapter used to read "1".
+    check('series: a series with no numbered book is numbered off in upload order',
+        chainOpened.map((c) => c.chapNum).join(',') === '1,2,3', chainOpened.map((c) => `${c.chapNum}:${c.id}`).join(' '))
+
+    // ---- what AsmHentai showed, caption for caption ----
+    // One upload credits the circle alone, the next the circle and artist.
+    const creditVariants = tilesOf([
+        ['[Marked-two] Marked-Girls Origin Vol. 02 [English][ScanMTL]', false],
+        ['[Marked-two (Suga Hideo)] Hi.Mi.Tsu.Ma Marked-girls Origin Vol. 6 [English] {Doujins.com}', false],
+        ['[Marked-Two (Suga Hideo)] Yogaritsuma Marked-girls Origin Vol.7 [English] [Kappasa] [Digital]', false]
+    ])
+    check('listing: uploads crediting the circle alone and circle-and-artist are one series',
+        creditVariants.length === 1, creditVariants.map((t) => t.mangaId).join(' | '))
+    check('creatorsOf splits a credit into circle and artist',
+        JSON.stringify(Sources.creatorsOf('[Marked-two (Suga Hideo)] X')) === '["marked two","suga hideo"]'
+            && JSON.stringify(Sources.creatorsOf('[Marked-two] X')) === '["marked two"]',
+        JSON.stringify(Sources.creatorsOf('[Marked-two (Suga Hideo)] X')))
+
+    // The page AsmHentai returned for "Tonari no Ayane-san", in its order: the
+    // arcs first, the series name part-way down. The name used to take over
+    // one arc's tile and leave the others beside it.
+    const ayanePage = tilesOf([
+        ['[Haraheridou (Herio)] Tonari no Ayane-san Ryokan de Shippori Hen [English] [Digital]', true],
+        ['[Haraheridou (Herio)] Tonari no Ayane-san Ryokan de Shippori Hen', true],
+        ['[Haraheridou (Herio)] Tonari no Ayane-san Soushuuhen | My Neighbor Ayane Anthology [English]', false],
+        ['[Haraheridou (Herio)] Tonari no Ayane-san Bangai Reinoheya Hen | My Neighbor Ayane: One of Those Rooms [English]', false],
+        ['(C97) [Haraheridou (Herio)] Tonari no Ayane-san | My Neighbor Ayane [English] [Digital]', true],
+        ['[Haraheridou (Herio)] Tonari no Ayane-san Itazura Jidori to Oshioki Ecchi Hen | My Neighbor Ayane [English]', true],
+        ['[Haraheridou (Herio)] Tonari no Ayane-san Otona no Omocha Hen [English] [Benri] [Digital]', true],
+        ['[Haraheridou (Herio)] Tonari no Ayane-san Desaki Battari Hen [English] [Digital]', true]
+    ])
+    check('listing: a page whose series name comes after its arcs is one tile',
+        ayanePage.length === 1 && ayanePage[0]?.mangaId === 's:Tonari no Ayane-san', ayanePage.map((t) => t.mangaId).join(' | '))
 }
 
 if (!LIVE) {

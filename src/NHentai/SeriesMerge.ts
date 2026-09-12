@@ -312,6 +312,34 @@ export const creatorOf = (raw: string): string => {
     return match ? seriesKey(match[1] as string) : ''
 }
 
+/** Credit words that name no one in particular, and so tie nothing together. */
+const ANONYMOUS_CREDITS = new Set(['various', 'anthology', 'unknown', 'english', 'digital', 'decensored', 'uncensored'])
+
+/**
+ * Every name in a title's credit, apart: "[Marked-two (Suga Hideo)]" is the
+ * circle "marked two" and the artist "suga hideo". Uploads of one series
+ * credit it differently -- AsmHentai lists Marked-girls Origin as
+ * "[Marked-two]" on some volumes and "[Marked-two (Suga Hideo)]" on others --
+ * and they are the same people's work if either name agrees.
+ */
+export const creatorsOf = (raw: string): string[] => {
+    const match = /^\s*(?:\([^)]*\)\s*)*\[([^\]]+)\]/.exec(raw)
+    if (!match) return []
+
+    const inner = match[1] as string
+    const paren = /^(.*?)\s*\(([^)]+)\)\s*$/.exec(inner)
+    const parts = paren
+        ? [paren[1] as string, ...(paren[2] as string).split(/[,&、]/)]
+        : inner.split(/[,&、]/)
+
+    const names: string[] = []
+    for (const part of parts) {
+        const name = seriesKey(part)
+        if (name.length >= 3 && !ANONYMOUS_CREDITS.has(name) && !names.includes(name)) names.push(name)
+    }
+    return names
+}
+
 // ---------------------------------------------------------------------------
 // Folding a listing into one tile per series
 // ---------------------------------------------------------------------------
@@ -327,12 +355,18 @@ export interface FoldMemo {
 /**
  * One listing card, as the fold sees it. `payload` is whatever the source
  * wants back when a tile is opened -- a listing entry, a card row.
+ *
+ * `creators` are names the source knows the card to be credited to beyond its
+ * title. AsmHentai's cards name their artist and group by id, which holds even
+ * when a caption credits no one -- it lists "NTR Jigo Houkoku 2 After" without
+ * any credit at all.
  */
 export interface FoldItem<T> {
     id: string
     raw: string
     thumb: string
     multiWork: boolean
+    creators?: string[]
     payload: T
 }
 
@@ -348,6 +382,25 @@ const FOLD_TTL = 1800000
 /** Everything the listing folded into the series named `base`. */
 export const foldedInto = <T>(memo: FoldMemo, base: string): FoldItem<T>[] =>
     memo.remembered<FoldItem<T>[]>(`f:${seriesKey(base)}`) ?? []
+
+/** Every name a card is credited under: its title's credit, and any the source adds. */
+const creditsOf = <T>(item: FoldItem<T>): string[] => {
+    const names = creatorsOf(item.raw)
+    for (const name of item.creators ?? []) {
+        if (name.length > 0 && !names.includes(name)) names.push(name)
+    }
+    return names
+}
+
+const sharesCredit = (a: string[], b: string[]): boolean => a.some((name) => b.includes(name))
+
+/**
+ * Two titles credited to the same creator, the longer name continuing the
+ * shorter with an arc or a book of its own. A longer name numbered in its own
+ * right is a line of its own and does not count.
+ */
+const continues = (shortKey: string, longKey: string, longNumbered: boolean): boolean =>
+    shortKey.length < longKey.length && !longNumbered && sharesLead(shortKey, longKey)
 
 /**
  * Collapses a page of listing cards into one tile per series.
@@ -365,11 +418,12 @@ export const foldedInto = <T>(memo: FoldMemo, base: string): FoldItem<T>[] =>
  * merge must never hide a volume.
  */
 export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: FoldMemo): FoldTile[] => {
-    const series: {
+    type Pending = {
         key: string; id: string; title: string; volume: number; thumb: string
-        book: boolean; numbered: boolean; clean: string; creator: string
+        book: boolean; numbered: boolean; clean: string; creators: string[]
         own: FoldItem<T>; folded: FoldItem<T>[]
-    }[] = []
+    }
+    const series: Pending[] = []
 
     // A single book already on screen is recorded as `#id`; it opens as itself
     // and has nothing to hand on.
@@ -382,18 +436,18 @@ export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: Fold
         memo.remember(`f:${tileRef}`, list, FOLD_TTL)
     }
 
-    // Recorded under its creator and its own series key, so that a later
-    // page's fold can find the tile through any gallery it holds.
+    // Recorded under each name it is credited to and its own series key, so a
+    // later page's fold can find the tile through any gallery it holds.
     const recordMember = (item: FoldItem<T>, tileRef: string | undefined): void => {
         if (tileRef == undefined) return
-        const creator = creatorOf(item.raw)
-        if (creator.length === 0) return
-
         const split = splitTitle(item.raw, item.multiWork)
-        const record = `a:${creator}|${seriesKey(split.base)}`
-        seen.add(record)
-        memo.remember(`k:${record}`, tileRef, FOLD_TTL)
-        memo.remember(`q:${record}`, split.numbered, FOLD_TTL)
+        const key = seriesKey(split.base)
+        for (const name of creditsOf(item)) {
+            const record = `a:${name}|${key}`
+            seen.add(record)
+            memo.remember(`k:${record}`, tileRef, FOLD_TTL)
+            memo.remember(`q:${record}`, split.numbered, FOLD_TTL)
+        }
     }
 
     // A single book already on screen, handed to a series shown after it, so
@@ -403,16 +457,24 @@ export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: Fold
         if (book != undefined) foldInto(tileKey, [book])
     }
 
-    // Two titles credited to the same creator, the longer name continuing the
-    // shorter with an arc or a book of its own. A longer name numbered in its
-    // own right is a line of its own and does not count.
-    const continues = (shortKey: string, longKey: string, longNumbered: boolean): boolean =>
-        shortKey.length < longKey.length && !longNumbered && sharesLead(shortKey, longKey)
+    const absorb = (into: Pending, from: Pending): void => {
+        into.folded.push(from.own, ...from.folded)
+        if (from.volume < into.volume) {
+            into.volume = from.volume
+            into.thumb = from.thumb
+        }
+        // A merged tile has to open as a series.
+        if (!into.id.startsWith(SERIES_PREFIX)) into.id = `${SERIES_PREFIX}${into.title}`
+        into.book = false
+        for (const name of from.creators) {
+            if (!into.creators.includes(name)) into.creators.push(name)
+        }
+    }
 
     for (const item of items) {
         const { base, volume, marked, numbered } = splitTitle(item.raw, item.multiWork)
         const clean = cleanTitle(item.raw) || item.raw
-        const creator = creatorOf(item.raw)
+        const creators = creditsOf(item)
 
         // Whether this name is one book's own full title, as opposed to a
         // series name -- read off a numbered volume, or cut from a longer
@@ -439,6 +501,9 @@ export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: Fold
                 same.thumb = thumb
             }
             same.folded.push(item)
+            for (const name of creators) {
+                if (!same.creators.includes(name)) same.creators.push(name)
+            }
             continue
         }
         if (seen.has(`t:${key}`) || seen.has(`n:${key}`)) {
@@ -520,8 +585,8 @@ export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: Fold
         // Ayane-san" and "… Desaki Battari Hen"). Either alone would be far too
         // loose -- "…Choukyou Nikki" ends any number of unrelated books -- so
         // the credit has to match. The site's tag need not be present.
-        if (!folded && creator.length > 0) {
-            const other = series.find((candidate) => candidate.creator === creator
+        if (!folded && creators.length > 0) {
+            const other = series.find((candidate) => sharesCredit(candidate.creators, creators)
                 && (sharesTail(candidate.key, key)
                     || continues(candidate.key, key, numbered)
                     || continues(key, candidate.key, candidate.numbered)))
@@ -544,15 +609,20 @@ export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: Fold
                     other.thumb = thumb
                 }
                 other.folded.push(item)
+                for (const name of creators) {
+                    if (!other.creators.includes(name)) other.creators.push(name)
+                }
                 folded = true
             } else {
                 // A tile from an earlier page, in either direction. An earlier
                 // series tile takes this one in; an earlier single book cannot,
                 // so this one is shown as the series and takes the book with it.
-                const prefix = `a:${creator}|`
                 for (const emitted of seen) {
-                    if (!emitted.startsWith(prefix)) continue
-                    const earlier = emitted.slice(prefix.length)
+                    if (!emitted.startsWith('a:')) continue
+                    const bar = emitted.indexOf('|')
+                    if (bar < 0 || !creators.includes(emitted.slice(2, bar))) continue
+
+                    const earlier = emitted.slice(bar + 1)
                     const earlierNumbered = memo.remembered<boolean>(`q:${emitted}`) ?? true
                     if (!(sharesTail(earlier, key) || continues(earlier, key, numbered) || continues(key, earlier, earlierNumbered))) continue
 
@@ -572,8 +642,34 @@ export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: Fold
 
         series.push({
             key: key, id: id, title: title, volume: volume, thumb: thumb,
-            book: book, numbered: numbered, clean: clean, creator: creator, own: item, folded: []
+            book: book, numbered: numbered, clean: clean, creators: creators, own: item, folded: []
         })
+    }
+
+    // A tile can take on a shorter series name part-way down the page -- the
+    // arcs of Tonari no Ayane-san came first, the series name itself later --
+    // and tiles pushed before that may belong to the name it took. Each card
+    // was only ever compared with the tiles before it, so the page is folded
+    // again until nothing more folds.
+    let changed = true
+    while (changed) {
+        changed = false
+        for (let i = 0; i < series.length && !changed; i++) {
+            for (let j = 0; j < series.length && !changed; j++) {
+                const a = series[i] as Pending
+                const b = series[j] as Pending
+                if (a === b) continue
+
+                const credited = sharesCredit(a.creators, b.creators)
+                const byCredit = credited && (continues(a.key, b.key, b.numbered) || (i < j && sharesTail(a.key, b.key)))
+                const byName = a.key.length < b.key.length && b.book && !a.book && sharesLead(a.key, b.key)
+                if (!byCredit && !byName) continue
+
+                absorb(a, b)
+                series.splice(j, 1)
+                changed = true
+            }
+        }
     }
 
     const tiles: FoldTile[] = []
@@ -588,8 +684,8 @@ export const foldTiles = <T>(items: FoldItem<T>[], seen: Set<string>, memo: Fold
         const tileRef = isSeries ? seriesKey(entry.id.slice(SERIES_PREFIX.length)) : `#${entry.id}`
         if (isSeries) foldInto(tileRef, [entry.own, ...entry.folded])
         memo.remember(`k:${key}`, tileRef, FOLD_TTL)
-        if (entry.creator.length > 0) {
-            const record = `a:${entry.creator}|${entry.key}`
+        for (const name of entry.creators) {
+            const record = `a:${name}|${entry.key}`
             seen.add(record)
             memo.remember(`k:${record}`, tileRef, FOLD_TTL)
             memo.remember(`q:${record}`, entry.numbered, FOLD_TTL)
@@ -640,11 +736,12 @@ export const isLongName = (candidates: SeriesCandidate[], base: string): boolean
  * only from the artist's own works. `trusted` is a gallery the listing itself
  * folded into the tile, taken on its word.
  *
- * `book` identifies the same book uploaded twice, so it is listed once.
+ * `book` identifies the same book uploaded twice, so it is listed once, and
+ * `numbered` whether its volume was read off its title at all.
  */
 export const volumeOf = (
     candidate: SeriesCandidate, base: string, longName: boolean, sameArtist: boolean, trusted: boolean = false
-): { belongs: boolean; volume: number; title: string; book: string } => {
+): { belongs: boolean; volume: number; numbered: boolean; title: string; book: string } => {
     const wanted = seriesKey(base)
     const split = splitTitle(candidate.raw, candidate.multiWork)
     const key = seriesKey(split.base)
@@ -656,15 +753,32 @@ export const volumeOf = (
     if (!belongs && sameArtist) belongs = sharesTail(key, wanted)
 
     const title = cleanTitle(candidate.raw) || candidate.raw
-    return { belongs: belongs, volume: split.volume, title: title, book: `${split.volume}|${seriesKey(title)}` }
+    return {
+        belongs: belongs, volume: split.volume, numbered: split.numbered,
+        title: title, book: `${split.volume}|${seriesKey(title)}`
+    }
 }
 
 /**
  * Volumes in reading order: by number, then upload order. A final part
  * ("Kanketsu-ban") is numbered one past the last volume.
+ *
+ * A series none of whose books carries a number at all -- an opener and its
+ * arcs, "Tonari no Ayane-san" and "… Desaki Battari Hen" -- is numbered off in
+ * upload order instead, the way HentaiNexus numbers its unnumbered sequels.
+ * Otherwise every one of its chapters read "1".
  */
-export const orderVolumes = <V extends { id: string | number; volume: number }>(volumes: V[]): V[] => {
+export const orderVolumes = <V extends { id: string | number; volume: number; numbered?: boolean }>(volumes: V[]): V[] => {
     const ordered = volumes.slice().sort((a, b) => a.volume - b.volume || Number(a.id) - Number(b.id))
+
+    if (ordered.length > 1 && ordered.every((volume) => volume.numbered === false)) {
+        ordered.sort((a, b) => Number(a.id) - Number(b.id))
+        ordered.forEach((volume, index) => {
+            volume.volume = index + 1
+        })
+        return ordered
+    }
+
     let next = ordered.filter((volume) => volume.volume < FINAL)
         .reduce((highest, volume) => Math.max(highest, Math.floor(volume.volume)), 0) + 1
     for (const volume of ordered) {

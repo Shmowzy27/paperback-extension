@@ -166,7 +166,7 @@ import {
     splitTitle,
     volumeOf
 } from './SeriesMerge'
-export { cleanTitle, creatorOf, seriesKey, sharesLead, sharesTail, splitTitle } from './SeriesMerge'
+export { cleanTitle, creatorOf, creatorsOf, seriesKey, sharesLead, sharesTail, splitTitle } from './SeriesMerge'
 
 const SERIES_PREFIX = 's:'
 export const seriesIdFor = (title: string): string => `${SERIES_PREFIX}${splitTitle(title).base}`
@@ -250,7 +250,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '2.3.2',
+    version: '2.4.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -567,7 +567,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         if (cached != undefined) return cached
 
         const parodies = await this.parodyIds()
-        const found = new Map<number, { id: number; title: string; volume: number }>()
+        const found = new Map<number, { id: number; title: string; volume: number; numbered: boolean }>()
         const books = new Set<string>()
 
         // Volumes of this very series that the rules refused -- what tells
@@ -598,7 +598,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                 if (books.has(verdict.book)) continue
                 books.add(verdict.book)
 
-                found.set(entry.id, { id: entry.id, title: verdict.title, volume: verdict.volume })
+                found.set(entry.id, { id: entry.id, title: verdict.title, volume: verdict.volume, numbered: verdict.numbered })
             }
         }
 

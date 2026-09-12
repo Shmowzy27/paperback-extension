@@ -204,7 +204,7 @@ interface CardRow {
  * English are dropped the same way, on the cards' language ids.
  */
 export const AsmHentaiInfo: SourceInfo = {
-    version: '1.5.0',
+    version: '1.6.0',
     name: 'AsmHentai (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -414,6 +414,9 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
             raw: row.raw,
             thumb: row.thumb,
             multiWork: row.multiWork,
+            // The card names its artist and group by id, which holds even when
+            // the caption credits no one or the circle alone.
+            creators: row.annotations.filter((annotation) => annotation.startsWith('artist:') || annotation.startsWith('group:')),
             payload: row
         }))
 
@@ -547,7 +550,7 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
         const cached = this.remembered<{ id: string; title: string; volume: number }[]>(cacheKey)
         if (cached != undefined) return cached
 
-        const found = new Map<string, { id: string; title: string; volume: number }>()
+        const found = new Map<string, { id: string; title: string; volume: number; numbered: boolean }>()
         const books = new Set<string>()
 
         const byName = this.parseCards(await this.loadPage(this.searchUrl(base, 1)))
@@ -561,7 +564,7 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
                 if (!verdict.belongs || books.has(verdict.book)) continue
                 books.add(verdict.book)
 
-                found.set(row.galleryId, { id: row.galleryId, title: verdict.title, volume: verdict.volume })
+                found.set(row.galleryId, { id: row.galleryId, title: verdict.title, volume: verdict.volume, numbered: verdict.numbered })
             }
         }
 
