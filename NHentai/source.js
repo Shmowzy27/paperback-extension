@@ -1059,7 +1059,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "2.2.0",
+    version: "2.3.0",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -1351,12 +1351,19 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
             }
           }
         }
+        const continues = (shortKey, longKey, longNumbered) => shortKey.length < longKey.length && !longNumbered && sharesLead(shortKey, longKey);
         if (!folded && creator.length > 0) {
-          const other = series.find((candidate) => candidate.creator === creator && sharesTail(candidate.key, key));
+          const other = series.find((candidate) => candidate.creator === creator && (sharesTail(candidate.key, key) || continues(candidate.key, key, numbered) || continues(key, candidate.key, candidate.numbered)));
           if (other != void 0) {
-            if (!other.id.startsWith("s:")) {
-              other.id = marked ? `s:${base}` : `s:${other.title}`;
-              if (marked) other.title = base;
+            if (continues(key, other.key, other.numbered)) {
+              other.key = key;
+              other.id = `s:${base}`;
+              other.title = base;
+              other.numbered = numbered;
+            } else if (!other.id.startsWith("s:")) {
+              const takeThis = marked && !continues(other.key, key, numbered);
+              other.id = takeThis ? `s:${base}` : `s:${other.title}`;
+              if (takeThis) other.title = base;
             }
             other.book = false;
             if (volume < other.volume) {
@@ -1368,7 +1375,9 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
           } else {
             const prefix = `a:${creator}|`;
             for (const emitted of seen) {
-              if (emitted.startsWith(prefix) && sharesTail(emitted.slice(prefix.length), key)) {
+              if (!emitted.startsWith(prefix)) continue;
+              const earlier = emitted.slice(prefix.length);
+              if (sharesTail(earlier, key) || continues(earlier, key, numbered)) {
                 this.foldInto(this.remembered(`k:${emitted}`), [entry]);
                 folded = true;
                 break;
@@ -1384,6 +1393,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
           volume,
           thumb,
           book,
+          numbered,
           clean,
           creator,
           own: entry,
@@ -1466,7 +1476,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
           const key = seriesKey(split.base);
           let belongs = key === wanted;
           if (!belongs && sharesLead(key, wanted)) {
-            belongs = key.length > wanted.length ? !split.numbered : longName && split.numbered;
+            belongs = key.length > wanted.length ? !split.numbered : longName && (split.numbered || sameArtist);
           }
           if (!belongs && sameArtist) belongs = sharesTail(key, wanted);
           if (!belongs) continue;
