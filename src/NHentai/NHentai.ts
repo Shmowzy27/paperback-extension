@@ -491,7 +491,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '2.3.0',
+    version: '2.3.1',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -599,13 +599,18 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
     }
 
     private remember(key: string, value: unknown, ttl: number = 120000): void {
-        // Bounded so a long browse cannot grow it without limit. The oldest
-        // half goes rather than the lot, so a big listing page cannot evict
-        // the tag catalogs it just paid for.
-        if (this.memo.size > 400) {
+        // Bounded so a long browse cannot grow it without limit, but no longer
+        // at 400. A listing page now leaves eighty-odd entries here -- the
+        // listing entries that make opening instant, and the records of what
+        // each tile folded in -- so at 400 a five-page scroll began evicting
+        // the first tiles' records, and those tiles opened without the volumes
+        // they had absorbed: the merge hiding a volume again. Three thousand
+        // small entries is well under a megabyte and holds a long browse; the
+        // oldest third goes when it fills.
+        if (this.memo.size > 3000) {
             const oldest = [...this.memo.entries()]
                 .sort((a, b) => a[1].at - b[1].at)
-                .slice(0, 200)
+                .slice(0, 1000)
             for (const [key] of oldest) this.memo.delete(key)
         }
         this.memo.set(key, { at: Date.now(), value: value, ttl: ttl })
@@ -807,7 +812,9 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                 continue
             }
             if (seen.has(`t:${key}`) || seen.has(`n:${key}`)) {
-                this.foldInto(this.remembered<string>(`k:t:${key}`) ?? this.remembered<string>(`k:n:${key}`), [entry])
+                const tileRef = this.remembered<string>(`k:t:${key}`) ?? this.remembered<string>(`k:n:${key}`)
+                this.foldInto(tileRef, [entry])
+                this.recordMember(seen, entry, tileRef)
                 continue
             }
 
@@ -869,7 +876,18 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                     const otherIsBook = emitted.startsWith('n:')
                     if ((key.length > other.length && book && !otherIsBook)
                         || (key.length < other.length && !book && otherIsBook)) {
-                        this.foldInto(this.remembered<string>(`k:${emitted}`), [entry])
+                        const tileRef = this.remembered<string>(`k:${emitted}`)
+                        if (tileRef != undefined && tileRef.startsWith('#')) {
+                            // The earlier tile is a single book already on
+                            // screen, and a tile cannot become a series after
+                            // the fact. Skipping this one used to lose the
+                            // series altogether behind a one-book tile, so it
+                            // is shown -- as the series tile, taking the book.
+                            if (marked) this.adopt(seriesKey(base), tileRef)
+                            break
+                        }
+                        this.foldInto(tileRef, [entry])
+                        this.recordMember(seen, entry, tileRef)
                         folded = true
                         break
                     }
@@ -926,24 +944,33 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                     other.folded.push(entry)
                     folded = true
                 } else {
-                    // A series tile from an earlier page already stands for this
-                    // one. Only series tiles are recorded: a plain gallery shown
-                    // earlier cannot be turned into its series after the fact,
-                    // so in that order the series tile still has to appear.
+                    // A tile from an earlier page, credited to the same creator,
+                    // with a related name. Every relation counts, in either
+                    // direction: this one sharing its ending, continuing its
+                    // name, or being the shorter series name its name continues
+                    // -- an arc shown a page before the series it belongs to.
                     //
-                    // Either relation counts, though only one way round for a
-                    // continuing name: this one continuing an earlier series.
-                    // An earlier tile whose name continues this one is already
-                    // on screen under the longer name, and cannot be renamed.
+                    // An earlier series tile takes this one in, and opens with
+                    // it. An earlier single book cannot: it is on screen as the
+                    // one book it names, and a tile cannot become a series after
+                    // the fact. So this one is shown as the series tile, and
+                    // takes the book with it.
                     const prefix = `a:${creator}|`
                     for (const emitted of seen) {
                         if (!emitted.startsWith(prefix)) continue
                         const earlier = emitted.slice(prefix.length)
-                        if (sharesTail(earlier, key) || continues(earlier, key, numbered)) {
-                            this.foldInto(this.remembered<string>(`k:${emitted}`), [entry])
+                        const earlierNumbered = this.remembered<boolean>(`q:${emitted}`) ?? true
+                        if (!(sharesTail(earlier, key) || continues(earlier, key, numbered) || continues(key, earlier, earlierNumbered))) continue
+
+                        const tileRef = this.remembered<string>(`k:${emitted}`)
+                        if (tileRef != undefined && tileRef.startsWith('#')) {
+                            if (marked) this.adopt(seriesKey(base), tileRef)
+                        } else {
+                            this.foldInto(tileRef, [entry])
+                            this.recordMember(seen, entry, tileRef)
                             folded = true
-                            break
                         }
+                        break
                     }
                 }
             }
@@ -961,18 +988,27 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             if (seen.has(key)) continue
             seen.add(key)
 
-            // A series tile hands everything folded into it to the series it
-            // opens as, and the records a later page's fold is matched against
-            // learn which series they stand for.
-            if (entry.id.startsWith('s:')) {
-                const tileKey = seriesKey(entry.id.slice(2))
-                this.foldInto(tileKey, [entry.own, ...entry.folded])
-                this.remember(`k:${key}`, tileKey, 1800000)
-                if (entry.creator.length > 0) {
-                    const record = `a:${entry.creator}|${entry.key}`
-                    seen.add(record)
-                    this.remember(`k:${record}`, tileKey, 1800000)
-                }
+            // Every tile leaves records that a later page's fold is matched
+            // against, saying what the tile stands for: a series tile, its
+            // series' key; a single book's tile, its gallery id. Only a series
+            // tile has anything to hand on -- a single book opens as itself.
+            const tileRef = entry.id.startsWith('s:') ? seriesKey(entry.id.slice(2)) : `#${entry.id}`
+            if (entry.id.startsWith('s:')) this.foldInto(tileRef, [entry.own, ...entry.folded])
+            this.remember(`k:${key}`, tileRef, 1800000)
+            if (entry.creator.length > 0) {
+                const record = `a:${entry.creator}|${entry.key}`
+                seen.add(record)
+                this.remember(`k:${record}`, tileRef, 1800000)
+                this.remember(`q:${record}`, entry.numbered, 1800000)
+            }
+
+            // Every gallery the tile holds is recorded as a member, not only
+            // the name it shows. A tile named for one arc that has taken in its
+            // series name must be findable by that name too: the next arc
+            // continues the series name, and shares nothing with the first arc
+            // but the word "Hen".
+            for (const member of entry.id.startsWith('s:') ? [entry.own, ...entry.folded] : [entry.own]) {
+                this.recordMember(seen, member, tileRef)
             }
 
             tiles.push(App.createPartialSourceManga({
@@ -991,13 +1027,41 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
      * same as the listing entries themselves.
      */
     private foldInto(tileKey: string | undefined, entries: ApiListing[]): void {
-        if (tileKey == undefined || entries.length === 0) return
+        if (tileKey == undefined || tileKey.startsWith('#') || entries.length === 0) return
 
         const list = this.remembered<ApiListing[]>(`f:${tileKey}`) ?? []
         for (const entry of entries) {
             if (!list.some((known) => known.id === entry.id)) list.push(entry)
         }
         this.remember(`f:${tileKey}`, list, 1800000)
+    }
+
+    /**
+     * Hands a single book already on screen -- `#id` -- to a series shown
+     * after it, so the series opens with the book it follows.
+     */
+    private adopt(tileKey: string, ref: string): void {
+        const book = this.remembered<ApiListing>(`l:${ref.slice(1)}`)
+        if (book != undefined) this.foldInto(tileKey, [book])
+    }
+
+    /**
+     * Records a gallery as a member of the tile `tileRef`, under its creator
+     * and its own series key, so that a later page's fold can find the tile
+     * through any gallery it holds.
+     */
+    private recordMember(seen: Set<string>, entry: ApiListing, tileRef: string | undefined): void {
+        if (tileRef == undefined) return
+
+        const raw = (entry.english_title ?? entry.japanese_title ?? '').trim()
+        const creator = creatorOf(raw)
+        if (creator.length === 0) return
+
+        const split = splitTitle(raw, isMultiWork(entry.tag_ids))
+        const record = `a:${creator}|${seriesKey(split.base)}`
+        seen.add(record)
+        this.remember(`k:${record}`, tileRef, 1800000)
+        this.remember(`q:${record}`, split.numbered, 1800000)
     }
 
     /**
@@ -1044,7 +1108,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         // found", which looks like a fault rather than the rules at work.
         let refused = 0
 
-        const consider = (entries: ApiListing[], sameArtist: boolean): void => {
+        const consider = (entries: ApiListing[], sameArtist: boolean, trusted: boolean = false): void => {
             for (const entry of entries) {
                 if (found.has(entry.id)) continue
 
@@ -1063,7 +1127,9 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                     belongs = key.length > wanted.length ? !split.numbered : (longName && (split.numbered || sameArtist))
                 }
                 if (!belongs && sameArtist) belongs = sharesTail(key, wanted)
-                if (!belongs) continue
+                // A gallery the listing itself folded into this tile is taken
+                // on its word: what the tile stood for is what it opens with.
+                if (!belongs && !trusted) continue
 
                 if (!this.admitted(entry.tag_ids, parodies)) {
                     refused++
@@ -1087,7 +1153,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         // it -- and a volume the listing had folded away, but that the open
         // could not find, simply vanished. What a tile stood for in the listing
         // is what it opens with, at no cost: the entries are already in hand.
-        consider(this.remembered<ApiListing[]>(`f:${wanted}`) ?? [], true)
+        consider(this.remembered<ApiListing[]>(`f:${wanted}`) ?? [], true, true)
 
         // Always, now that listings merge a creator's volumes by their shared
         // ending: a tile built that way has to open with every volume it stands

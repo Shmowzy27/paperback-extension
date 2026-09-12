@@ -274,12 +274,17 @@ const ACROSS = [
     ['a series name, then its "Hen" arc a page later',
         [[['[Arakure (Arakure)] Tonari no Ayane-san [English]', true]],
             [['[Arakure (Arakure)] Tonari no Ayane-san Desaki Battari Hen [English]', true]]], 1],
-    // The arc first: it is on screen under its own longer name before the
-    // series name turns up, and a tile cannot be renamed, so both appear. Each
-    // opens as a series, and the arc's reaches back to the series name.
+    // The arc first: the series name a page later folds into the arc's tile,
+    // which is already a series and opens with both.
     ['a "Hen" arc, then its series name a page later',
         [[['[Arakure (Arakure)] Tonari no Ayane-san Desaki Battari Hen [English]', true]],
-            [['[Arakure (Arakure)] Tonari no Ayane-san [English]', true]]], 2]
+            [['[Arakure (Arakure)] Tonari no Ayane-san [English]', true]]], 1],
+    // A single book first, then a numbered series its name continues: the
+    // series must still appear. Skipping it behind the book's tile, as the
+    // listing once did, lost the series altogether.
+    ['a single book, then the numbered series it opens a page later',
+        [[['[Arakure (Arakure)] Tonari no Ayane-san Desaki Battari Hen [English]', false]],
+            [['[Arakure (Arakure)] Tonari no Ayane-san 2 [English]', false]]], 2]
 ]
 for (const [label, pages, expected] of ACROSS) {
     const tiles = tilesAcross(pages)
@@ -376,6 +381,47 @@ const seriesOffline = async () => {
     const COLLECTION_3 = listed(32, '[Marked-two (Suga Hideo)] Marked-girls Collection Vol. 3 [English]', [EN])
     const byMain = await fakeSeries([MAIN_5], [MAIN_5, COLLECTION_3]).getChapters('s:Marked-girls')
     check('series: a numbered sub-line is not pulled into the main line', idsOf(byMain) === '31', idsOf(byMain))
+
+    // A series' untagged first book shown alone a page before the series: the
+    // book's tile cannot become the series, so the series tile appears after
+    // it -- and must open with that first book, even when neither its own name
+    // search nor the artist search returns it.
+    const TOXIC = listed(41, '[Mint no Chicchai Oana (Mint Muzzlini)] Toxic JK Netorare Jigo Houkoku... [English]', [EN])
+    const JIGO_2 = listed(42, '[Mint no Chicchai Oana (Mint Muzzlini)] NTR Jigo Houkoku 2 After [English]', [EN, MWS])
+    const jigoLister = fakeSeries([JIGO_2], [])
+    const jigoSeen = new Set()
+    jigoLister.tilesFrom([TOXIC], jigoSeen, undefined)
+    const [jigoTile] = jigoLister.tilesFrom([JIGO_2], jigoSeen, undefined)
+    const jigoOpened = jigoTile ? await jigoLister.getChapters(jigoTile.mangaId) : []
+    check('series: a series tile shown after its first book opens with that book',
+        idsOf(jigoOpened) === '41,42', `${jigoTile?.mangaId} -> ${jigoOpened.map((c) => `${c.chapNum}:${c.id}`).join(' ')}`)
+
+    // An arc shown a page before its series name: the name folds into the arc's
+    // tile, and the tile opens with both.
+    const arcLister = fakeSeries([ARC_1], [])
+    const arcSeen = new Set()
+    const [arcTile] = arcLister.tilesFrom([ARC_1], arcSeen, undefined)
+    const afterArc = arcLister.tilesFrom([AYANE], arcSeen, undefined)
+    const arcOpened = await arcLister.getChapters(arcTile.mangaId)
+    check('series: a series name a page after its arc folds into the arc\'s tile, which opens with both',
+        afterArc.length === 0 && idsOf(arcOpened) === '21,22',
+        `${afterArc.length} new tile(s); ${arcTile.mangaId} -> ${idsOf(arcOpened)}`)
+
+    // The sequence the broad English sample actually had: one arc, then the
+    // series name, then a second arc, a page apart each. The tile is named for
+    // the first arc; the second arc shares nothing with that name but "Hen",
+    // so it can only find the tile through the series name the tile took in.
+    const chainLister = fakeSeries([ARC_2], [])
+    const chainSeen = new Set()
+    const [chainTile] = chainLister.tilesFrom([ARC_2], chainSeen, undefined)
+    const chainLater = [
+        ...chainLister.tilesFrom([AYANE], chainSeen, undefined),
+        ...chainLister.tilesFrom([ARC_1], chainSeen, undefined)
+    ]
+    const chainOpened = await chainLister.getChapters(chainTile.mangaId)
+    check('series: an arc, its series name and a second arc, a page apart each, are one tile that opens with all three',
+        chainLater.length === 0 && idsOf(chainOpened) === '21,22,23',
+        `${chainLater.length} later tile(s) ${chainLater.map((t) => t.mangaId).join(' | ')}; ${chainTile.mangaId} -> ${idsOf(chainOpened)}`)
 }
 
 if (!LIVE) {
