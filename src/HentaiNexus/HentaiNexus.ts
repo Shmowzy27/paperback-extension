@@ -1,3 +1,4 @@
+import { nothingToShow } from '../NHentai/SeriesMerge'
 import {
     BadgeColor,
     Chapter,
@@ -45,7 +46,7 @@ import {
 } from './HentaiNexusParser'
 
 export const HentaiNexusInfo: SourceInfo = {
-    version: '1.8.0',
+    version: '1.9.0',
     name: 'HentaiNexus',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -167,7 +168,7 @@ export class HentaiNexus implements SearchResultsProviding, MangaProviding, Chap
         const base = baseFromSeriesId(mangaId)
         const volumes = await this.fetchVolumes(base)
         if (volumes.length === 0) {
-            throw new Error(`No volumes found for "${base}".`)
+            throw new Error(nothingToShow(base, 0, false))
         }
 
         // The first volume supplies the cover, artist and tags for the series.

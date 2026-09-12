@@ -133,68 +133,35 @@ const CATALOG_LETTERS = 'abcdefghijklmnopqrstuvwxyz'.split('').concat(['num'])
 
 /**
  * Galleries here are flat -- a multi-volume work is published as several
- * separate galleries -- so volumes are merged into one library entry the way
- * HentaiNexus and the nhentai source do it.
+ * separate galleries -- so volumes are merged into one library entry. The
+ * rules that read a series off a title, the fold that turns a listing into one
+ * tile per series, and the rules for gathering a series are the nhentai
+ * source's: they live in ../NHentai/SeriesMerge.ts and are shared, so a fix
+ * lands in both at once. This source kept its own copy once, and it fell
+ * behind -- no creator rule, no multi-work tag, one search page.
  */
-const VOLUME = '(\\d{1,3}(?:\\.\\d{1,2})?)'
-const SUBTITLE = '(?:\\s*[:\\-–—]\\s*.+)?'
-
-const VOLUME_PATTERNS: RegExp[] = [
-    new RegExp(`^(.*?\\S)\\s+(?:ch\\.?|chapter)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
-    new RegExp(`^(.*?\\S)\\s+(?:vol\\.?|volume)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
-    new RegExp(`^(.*?\\S)\\s+(?:part|pt\\.?)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
-    new RegExp(`^(.*?\\S)\\s*#\\s*${VOLUME}${SUBTITLE}$`),
-    new RegExp(`^(.*?\\S)\\s+${VOLUME}${SUBTITLE}$`),
-    // The number is often glued straight onto the last word ("NAGI3"), which
-    // every whitespace-anchored pattern above misses.
-    new RegExp(`^(.*?[A-Za-z])(\\d{1,2})$`)
-]
+import {
+    cleanTitle,
+    FoldItem,
+    FoldMemo,
+    foldedInto,
+    foldTiles,
+    isLongName,
+    nothingToShow,
+    orderVolumes,
+    SERIES_PREFIX,
+    seriesKey,
+    splitTitle,
+    volumeOf
+} from '../NHentai/SeriesMerge'
+export { cleanTitle, splitTitle } from '../NHentai/SeriesMerge'
 
 /**
- * Titles arrive wrapped in circle, artist, language and scanlator brackets --
- * "[Circle (Artist)] Real Title 2 (Parody) [Digital]". Those are stripped
- * innermost-first and repeatedly, because one pass leaves the outer bracket of
- * a nested pair behind and a leftover "[Circle ]" poisons the series name.
- *
- * An alternative title after a pipe is dropped for the same reason it is on
- * nhentai: it puts the volume number in the middle of the string, so no
- * pattern matches and the other language ends up in the series name.
+ * The site's own "multi-work series" tag: id 25, carried by every card on
+ * /tag/multi-work-series/. Its word that a gallery has siblings.
  */
-export const cleanTitle = (raw: string): string => {
-    let text = raw
-    let previous = ''
-    while (previous !== text) {
-        previous = text
-        text = text.replace(/[\[(（][^\[\]()（）]*[\])）]/g, '')
-    }
+const MULTI_WORK_TAG_ID = '25'
 
-    const halves = text.split('|').map((half) => half.trim()).filter((half) => half.length > 0)
-    text = halves.length > 0 ? (halves[0] as string) : text
-
-    return text.replace(/\s+/g, ' ').trim().replace(/^[-~:.\s]+|[-~:.\s]+$/g, '')
-}
-
-/**
- * `marked` says whether a volume number was actually found, which decides
- * whether the entry is treated as a series at all: a gallery with no volume
- * number cannot have siblings worth looking up, so it keeps its own id and
- * opens without a sibling search.
- */
-export const splitTitle = (title: string): { base: string; volume: number; marked: boolean } => {
-    const trimmed = cleanTitle(title)
-
-    for (const pattern of VOLUME_PATTERNS) {
-        const match = pattern.exec(trimmed)
-        if (!match) continue
-
-        const base = (match[1] as string).replace(/[\s\-–—:,.]+$/, '').trim()
-        if (base.length > 0) return { base: base, volume: Number(match[2]), marked: true }
-    }
-
-    return { base: trimmed.length > 0 ? trimmed : title.trim(), volume: 1, marked: false }
-}
-
-const SERIES_PREFIX = 's:'
 export const isSeriesId = (mangaId: string): boolean => mangaId.startsWith(SERIES_PREFIX)
 export const baseFromSeriesId = (mangaId: string): string => mangaId.slice(SERIES_PREFIX.length)
 
@@ -205,6 +172,10 @@ interface ListingMetadata {
 
 interface CardRow {
     galleryId: string
+    /** The caption as the site gives it, credits and all. */
+    raw: string
+    /** Tagged by the site as part of a multi-work series. */
+    multiWork: boolean
     base: string
     title: string
     volume: number
@@ -233,7 +204,7 @@ interface CardRow {
  * English are dropped the same way, on the cards' language ids.
  */
 export const AsmHentaiInfo: SourceInfo = {
-    version: '1.4.0',
+    version: '1.5.0',
     name: 'AsmHentai (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -328,8 +299,26 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
     }
 
     private remember(key: string, value: unknown, ttl: number = 120000): void {
-        if (this.memo.size > 40) this.memo.clear()
+        // It used to clear itself at forty entries. The fold now keeps what
+        // each tile took in here, so opening the tile gathers it -- a page
+        // leaves dozens of records, and clearing at forty would have thrown
+        // them away within a page. Three thousand small entries holds a long
+        // browse; the oldest third goes when it fills.
+        if (this.memo.size > 3000) {
+            const oldest = [...this.memo.entries()]
+                .sort((a, b) => a[1].at - b[1].at)
+                .slice(0, 1000)
+            for (const [key] of oldest) this.memo.delete(key)
+        }
         this.memo.set(key, { at: Date.now(), value: value, ttl: ttl })
+    }
+
+    /** This source's memo, as the shared fold sees it. */
+    private get foldMemo(): FoldMemo {
+        return {
+            remember: (key: string, value: unknown, ttl?: number) => this.remember(key, value, ttl),
+            remembered: <V>(key: string) => this.remembered<V>(key)
+        }
     }
 
     private async fetchHtml(url: string): Promise<string> {
@@ -373,7 +362,8 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
             if (galleryId == undefined || raw.length === 0) continue
             if (BANNED_LABELS.test(raw)) continue
 
-            const { base, volume, marked } = splitTitle(raw)
+            const multiWork = tagIds.includes(MULTI_WORK_TAG_ID)
+            const { base, volume, marked } = splitTitle(raw, multiWork)
 
             // Scoped to the lazy-loaded cover: a card leads with a small
             // language flag image, so taking the first <img> yielded the flag
@@ -397,6 +387,8 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
 
             rows.push({
                 galleryId: galleryId,
+                raw: raw,
+                multiWork: multiWork,
                 base: base,
                 title: marked ? base : (cleanTitle(raw) || raw),
                 volume: volume,
@@ -410,34 +402,26 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
     }
 
     /**
-     * Collapses the cards on a page into one entry per work. A numbered
-     * gallery becomes a series so its volumes merge; an unnumbered one keeps
-     * its own gallery id but is still keyed on its title, so the several
-     * copies the site carries of one work collapse to a single tile.
+     * Collapses the cards on a page into one tile per series, by the same
+     * rules as the nhentai source -- foldTiles in SeriesMerge.ts: numbered
+     * volumes, the site's multi-work tag, and two titles credited to the same
+     * creator whose names start or end alike, on one page or across pages.
+     * The cards reaching here have already passed this source's own rules.
      */
     private tilesFrom(rows: CardRow[], seen: Set<string>): PartialSourceManga[] {
-        const grouped = new Map<string, CardRow>()
+        const items: FoldItem<CardRow>[] = rows.map((row) => ({
+            id: row.galleryId,
+            raw: row.raw,
+            thumb: row.thumb,
+            multiWork: row.multiWork,
+            payload: row
+        }))
 
-        for (const row of rows) {
-            const key = row.base.toLowerCase()
-            const existing = grouped.get(key)
-            // The lowest-numbered volume supplies the cover.
-            if (existing == undefined || row.volume < existing.volume) grouped.set(key, row)
-        }
-
-        const tiles: PartialSourceManga[] = []
-        for (const [key, row] of grouped) {
-            if (seen.has(key)) continue
-            seen.add(key)
-
-            tiles.push(App.createPartialSourceManga({
-                mangaId: row.marked ? `${SERIES_PREFIX}${row.base}` : row.galleryId,
-                image: row.thumb,
-                title: row.title
-            }))
-        }
-
-        return tiles
+        return foldTiles(items, seen, this.foldMemo).map((tile) => App.createPartialSourceManga({
+            mangaId: tile.id,
+            image: tile.thumb,
+            title: tile.title
+        }))
     }
 
     /**
@@ -546,35 +530,73 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
         return filters.include.every((id) => row.annotations.includes(id))
     }
 
-    /** Every gallery belonging to `base`, ordered by volume. */
+    /**
+     * Every gallery belonging to `base`, ordered by volume -- gathered as the
+     * nhentai source gathers a series, by the shared rules in SeriesMerge.ts:
+     * the site's search for the name; everything the listing folded into the
+     * tile, taken on its word; and the artist's own listing, which is where
+     * the volumes that each lead with a title of their own are. parseCards
+     * holds every card to this source's rules -- English, the standing
+     * exclusions, no parodies -- before any of this sees it.
+     *
+     * Remembered briefly: opening an entry asks for details and chapters back
+     * to back, and both need this.
+     */
     private async volumesOf(base: string): Promise<{ id: string; title: string; volume: number }[]> {
-        const $ = await this.loadPage(`${ASM_DOMAIN}/search/?q=${encodeURIComponent(base)}`)
+        const cacheKey = `v:${seriesKey(base)}`
+        const cached = this.remembered<{ id: string; title: string; volume: number }[]>(cacheKey)
+        if (cached != undefined) return cached
 
-        const wanted = base.toLowerCase()
-        const volumes: { id: string; title: string; volume: number }[] = []
-        const seen = new Set<string>()
+        const found = new Map<string, { id: string; title: string; volume: number }>()
+        const books = new Set<string>()
 
-        for (const row of this.parseCards($)) {
-            if (row.base.toLowerCase() !== wanted || seen.has(row.galleryId)) continue
+        const byName = this.parseCards(await this.loadPage(this.searchUrl(base, 1)))
+        const longName = isLongName(byName, base)
 
-            seen.add(row.galleryId)
-            volumes.push({ id: row.galleryId, title: row.title, volume: row.volume })
+        const consider = (rows: CardRow[], sameArtist: boolean, trusted: boolean = false): void => {
+            for (const row of rows) {
+                if (found.has(row.galleryId)) continue
+
+                const verdict = volumeOf(row, base, longName, sameArtist, trusted)
+                if (!verdict.belongs || books.has(verdict.book)) continue
+                books.add(verdict.book)
+
+                found.set(row.galleryId, { id: row.galleryId, title: verdict.title, volume: verdict.volume })
+            }
         }
 
-        volumes.sort((a, b) => a.volume - b.volume)
+        consider(byName, false)
+        consider(foldedInto<CardRow>(this.foldMemo, base).map((item) => item.payload), true, true)
+
+        if (found.size > 0) {
+            try {
+                const first = orderVolumes(Array.from(found.values()))[0] as { id: string }
+                const $ = await this.loadPage(`${ASM_DOMAIN}/g/${first.id}/`)
+                const artists = this.metaRow($, 'Artists')
+                const creator = artists[0] ?? this.metaRow($, 'Groups')[0]
+                if (creator != undefined) {
+                    const type = artists.length > 0 ? 'artist' : 'group'
+                    consider(this.parseCards(await this.loadPage(`${ASM_DOMAIN}/${type}/${creator.slug}/`)), true)
+                }
+            } catch {
+                // The name search and the listing's folds still stand.
+            }
+        }
+
+        const volumes = orderVolumes(Array.from(found.values()))
+
+        // The cards were filtered before they got here, so this cannot tell
+        // "excluded" from "not in English"; the message names both rules.
+        if (volumes.length === 0) throw new Error(nothingToShow(base, 0, true))
+
+        this.remember(cacheKey, volumes)
         return volumes
     }
 
     /** Resolves the gallery that should speak for an entry. */
     private async representativeId(mangaId: string): Promise<string> {
         if (!isSeriesId(mangaId)) return mangaId
-
-        const base = baseFromSeriesId(mangaId)
-        const volumes = await this.volumesOf(base)
-        if (volumes.length === 0) {
-            throw new Error(`No volumes found for "${base}".`)
-        }
-        return (volumes[0] as { id: string }).id
+        return ((await this.volumesOf(baseFromSeriesId(mangaId)))[0] as { id: string }).id
     }
 
     /**
@@ -698,11 +720,8 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
             })]
         }
 
-        const base = baseFromSeriesId(mangaId)
-        const volumes = await this.volumesOf(base)
-        if (volumes.length === 0) {
-            throw new Error(`No volumes found for "${base}".`)
-        }
+        // volumesOf says why, in words, when nothing is left to show.
+        const volumes = await this.volumesOf(baseFromSeriesId(mangaId))
 
         return volumes.map((volume, index) => App.createChapter({
             id: volume.id,

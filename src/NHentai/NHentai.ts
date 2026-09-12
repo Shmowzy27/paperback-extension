@@ -144,270 +144,29 @@ const SECTIONS: { id: string; label: string; sort: string }[] = [
 /**
  * Galleries on nhentai are flat: a multi-volume work is published as several
  * separate galleries, exactly the shape HentaiNexus faces. So volumes are
- * merged into one library entry the same way -- the trailing volume number is
- * stripped off the title and what remains is the series.
+ * merged into one library entry -- the rules that read a series off a title
+ * live in SeriesMerge.ts beside this file, shared with AsmHentai and HentaiNexus so
+ * a fix lands in all three at once.
  *
  * The sister sites need none of this: hentaihere and hentai2read already model
  * a series with several chapters natively.
  *
- * Every shape below was taken from real English NTR titles that failed to
- * merge -- "Mesu no Ie III ~Oyako wa…", "Ryuumon ni Shimuru Ryuuge Kouhen",
- * "Marked-girls Vol.24 Takopi no Yobigoe", "…Junior~ Part One", "NTR Jigo
- * Houkoku 2 After". A subtitle used to need a colon or a dash in front of it;
- * on this site it is as often a tilde, a quote, or nothing at all.
+ * Re-exported so the offline checks can reach them through the bundle.
  */
-const VOLUME = '(\\d{1,3}(?:\\.\\d{1,2})?)(?:\\s*[~\\-–]\\s*\\d{1,3}(?=\\s|$))?'
-const SUBTITLE = '(?:\\s*[:\\-–—~"“「『]\\s*.*)?'
-/** Anything at all may follow a number that an explicit keyword introduced. */
-const ANYTHING = '(?:[\\s:\\-–—~"“「『].*)?'
-
-/**
- * Sorts after every numbered volume. Resolved to "one past the last" once a
- * series' volumes are known, so a final chapter never reads as chapter 9999.
- */
-const FINAL = 9999
-
-const WORD_NUMBERS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 }
-const ROMAN_NUMBERS: Record<string, number> = { II: 2, III: 3, IV: 4, VI: 6, VII: 7, VIII: 8, IX: 9 }
-const JAPANESE_NUMBERS: Record<string, number> = {
-    ichi: 1, ni: 2, san: 3, yon: 4, shi: 4, go: 5, roku: 6, nana: 7, shichi: 7, hachi: 8, kyuu: 9, ku: 9, juu: 10
-}
-
-/** Zenpen / Chuuhen / Kouhen (first, middle, last part), and the bound halves. */
-const partNumber = (word: string): number => {
-    const key = word.toLowerCase().replace(/-/g, '')
-    if (key.startsWith('kanketsu')) return FINAL
-    const parts: Record<string, number> = { zenpen: 1, joukan: 1, chuuhen: 1.5, chuukan: 1.5, kouhen: 2, gekan: 2 }
-    return parts[key] ?? 1
-}
-
-/** A side story told after a numbered volume: "2 After" reads as 2.5. */
-const AFTERWORDS = 'after\\s*story|afterstory|after|extras?|omake|bonus|epilogue|side\\s*story|special|continued|plus'
-
-interface VolumeRule {
-    pattern: RegExp
-    volume: (match: RegExpExecArray) => number
-}
-
-const VOLUME_RULES: VolumeRule[] = [
-    // An explicit keyword makes the number certain, so anything may follow.
-    { pattern: new RegExp(`^(.*?\\S)\\s+(?:ch\\.?|chapter|vol\\.?|volume|episode|ep\\.?)\\s*${VOLUME}${ANYTHING}$`, 'i'), volume: (m) => Number(m[2]) },
-    { pattern: new RegExp(`^(.*?\\S)[\\s\\-–]+(?:part|pt\\.?)\\s*${VOLUME}${ANYTHING}$`, 'i'), volume: (m) => Number(m[2]) },
-    {
-        pattern: new RegExp(`^(.*?\\S)[\\s\\-–]+(?:part|pt\\.?|chapter|volume|vol\\.?)\\s+(one|two|three|four|five|six|seven|eight|nine|ten)${ANYTHING}$`, 'i'),
-        volume: (m) => WORD_NUMBERS[(m[2] as string).toLowerCase()] ?? 1
-    },
-    { pattern: new RegExp(`^(.*?\\S)\\s*#\\s*${VOLUME}${ANYTHING}$`), volume: (m) => Number(m[2]) },
-    // "その2" / "Sono 2", the Japanese "part 2", on titles that carry only the
-    // Japanese name. The romaji needs a space in front so "Kasono 2" is safe.
-    { pattern: new RegExp(`^(.*?\\S)(?:\\s+sono|\\s*その)\\s*${VOLUME}${ANYTHING}$`, 'i'), volume: (m) => Number(m[2]) },
-    // "Sakura-san Sono San" -- the same, with the number spelt out in romaji.
-    {
-        pattern: /^(.*?\S)\s+sono\s+(ichi|ni|san|yon|shi|go|roku|nana|shichi|hachi|kyuu|ku|juu)(?:[\s:\-–—~"“「『].*)?$/i,
-        volume: (m) => JAPANESE_NUMBERS[(m[2] as string).toLowerCase()] ?? 1
-    },
-    // "…NTR P01~08", then "…NTR P01~012": a page range, re-uploaded as the
-    // translation progresses. Each is the same book so far, so each is the
-    // first volume, and the newer upload wins when duplicates are dropped.
-    { pattern: /^(.*?\S)\s+P\d{1,3}\s*[~\-]\s*\d{1,3}$/, volume: () => 1 },
-    // First, middle and last parts, often quoted: Zenpen, "Kouhen", Kanketsu-ban.
-    {
-        pattern: /^(.*?\S)(?:[\s\-–]+["“『「]?|["“『「])(zen-?pen|chuu-?hen|kou-?hen|jou-?kan|chuu-?kan|ge-?kan|kanketsu(?:-?(?:hen|ban))?)["”』」]?(?:[\s:\-–—~].*)?$/i,
-        volume: (m) => partNumber(m[2] as string)
-    },
-    { pattern: new RegExp(`^(.*?\\S)\\s+${VOLUME}\\s*\\+?\\s*(?:${AFTERWORDS})\\b.*$`, 'i'), volume: (m) => Number(m[2]) + 0.5 },
-    // Roman numerals, upper case only, so the pronoun "I" and an "x"
-    // collaboration are left alone; V and X are skipped for the same reason.
-    { pattern: /^(.*?\S)\s+(II|III|IV|VI|VII|VIII|IX)(?:\s*[:\-–—~"“「『].*)?$/, volume: (m) => ROMAN_NUMBERS[m[2] as string] ?? 1 },
-    // A bare trailing number, with or without a separated subtitle.
-    { pattern: new RegExp(`^(.*?\\S)\\s+${VOLUME}${SUBTITLE}$`), volume: (m) => Number(m[2]) },
-    // "WASANBON NAGI3" -- this site frequently glues the number straight onto
-    // the last word, which every whitespace-anchored pattern above misses.
-    { pattern: /^(.*?[A-Za-z])(\d{1,2})$/, volume: (m) => Number(m[2]) }
-]
-
-/**
- * Where a book's own subtitle starts, for a gallery the site says belongs to a
- * series but that carries no number: "Breeding License: The … Edition".
- */
-const SUBTITLE_SEPARATORS = [' - ', ' – ', ' — ', ': ', ' ~', '~ ', ' "', ' “', ' 「', ' 『']
-
-/**
- * Titles arrive wrapped in circle, artist, language and scanlator brackets --
- * "[Circle (Artist)] Real Title 2 (Parody) [Digital]". Those are stripped
- * innermost-first and repeatedly, because a single pass leaves the outer
- * bracket of a nested pair behind and the leftover "[Circle ]" poisons the
- * series name.
- */
-export const cleanTitle = (raw: string): string => {
-    let text = raw
-    let previous = ""
-    while (previous !== text) {
-        previous = text
-        text = text.replace(/[\[(（][^\[\]()（）]*[\])）]/g, '')
-    }
-
-    // "English Title | 日本語タイトル" is this site's alternative-title form, and
-    // the trailing half is what kept works from merging: the volume number
-    // stops being the end of the string, so no pattern matches and the whole
-    // Chinese or Japanese title lands in the series name. Only the leading
-    // half is kept -- unless it is empty, in which case the title led with the
-    // other language and that half is all there is.
-    const halves = text.split('|').map((half) => half.trim()).filter((half) => half.length > 0)
-    text = halves.length > 0 ? (halves[0] as string) : text
-
-    return text.replace(/\s+/g, ' ').trim().replace(/^[-~:.\s]+|[-~:.\s]+$/g, '')
-}
-
-/**
- * `marked` says whether an entry is treated as a series at all, and that
- * decision is what keeps this source inside the API's budget: a gallery with
- * no volume number and no sign of siblings keeps its own id and opens on a
- * single request, instead of paying for a sibling search that could only ever
- * return itself.
- *
- * `numbered` says whether a volume was actually read off the title. It tells a
- * series name ("Marked-girls Collection", out of "…Collection Vol. 4") from a
- * single book's long name ("Aimai na Bokura Kanojo wa Tabun…"), which is what
- * decides whether one name continuing another makes them the same series.
- *
- * `series` is the site's own "multi-work series" tag. With it, looser shapes
- * become safe -- a number mid-title, a subtitle after a plain separator -- and
- * a gallery becomes a series even with no number at all, because the site has
- * said it has siblings. Without it, "Aimai na Bokura 2 Kanojo wa…" stays one
- * book: a number in the middle of an untagged title is as likely to be "2
- * wives" as "volume 2".
- */
-export const splitTitle = (title: string, series: boolean = false): { base: string; volume: number; marked: boolean; numbered: boolean } => {
-    const trimmed = cleanTitle(title)
-    // The trailing period matters: "... Hanashi. Ch. 8" leaves "Hanashi."
-    // behind, which would not group with a variant written without it.
-    const tidy = (base: string): string => base.replace(/[\s\-–—:,.~]+$/, '').trim()
-
-    for (const rule of VOLUME_RULES) {
-        const match = rule.pattern.exec(trimmed)
-        if (!match) continue
-
-        const base = tidy(match[1] as string)
-        if (base.length > 0) return { base: base, volume: rule.volume(match), marked: true, numbered: true }
-    }
-
-    if (series) {
-        const mid = /^(.*?\S)\s+(\d{1,2})\s+\S/.exec(trimmed)
-        if (mid) {
-            const base = tidy(mid[1] as string)
-            if (base.length > 0) return { base: base, volume: Number(mid[2]), marked: true, numbered: true }
-        }
-
-        // No number, but the site says there are siblings: the series name is
-        // whatever comes before the book's own subtitle.
-        let cut = trimmed.length
-        for (const separator of SUBTITLE_SEPARATORS) {
-            const at = trimmed.indexOf(separator)
-            if (at >= 4 && at < cut) cut = at
-        }
-        const base = tidy(trimmed.slice(0, cut))
-        return { base: base.length > 0 ? base : trimmed, volume: 1, marked: true, numbered: false }
-    }
-
-    return { base: trimmed.length > 0 ? trimmed : title.trim(), volume: 1, marked: false, numbered: false }
-}
-
-/**
- * A series name reduced to what identifies it: case and punctuation go, and so
- * does the difference between "Marked-girls" and "Marked Girls" -- one series
- * on this site, spelled both ways by different scanlators.
- */
-export const seriesKey = (base: string): string => base.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
-
-const keyWords = (base: string): string[] => seriesKey(base).split(' ').filter((word) => word.length > 0)
-
-/**
- * Words too common to tie two titles together on their own: particles, the
- * genre's own vocabulary, honorifics. Two NTR books that share "hitozuma no"
- * or "netorare tsuma" are not a series.
- */
-const GENERIC_WORDS = new Set([
-    'a', 'an', 'and', 'de', 'e', 'ga', 'her', 'his', 'in', 'is', 'ka', 'mo', 'my', 'na', 'ne', 'ni', 'no', 'o',
-    'of', 'on', 'the', 'to', 'wa', 'wo', 'ya', 'yo', 'your',
-    'ane', 'ban', 'chan', 'ecchi', 'gal', 'haha', 'hen', 'hitozuma', 'imouto', 'jk', 'kanojo', 'kun', 'mama',
-    'musume', 'netorare', 'netorase', 'netori', 'ntr', 'onee', 'onii', 'sama', 'san', 'sensei', 'sex', 'tsuma'
-])
-
-/**
- * Particles join words; they are not words a series is named by. Counted as
- * words, "no himitsu" was a two-word match and folded "Hitozuma no Himitsu"
- * and "Kanojo no Himitsu" together -- "…no Himitsu" ("'s secret") ends half the
- * genre. So they are left out of the count.
- */
-const PARTICLES = new Set([
-    'a', 'an', 'and', 'de', 'e', 'ga', 'in', 'is', 'ka', 'mo', 'na', 'ne', 'ni', 'no', 'o', 'of', 'on', 'the',
-    'to', 'wa', 'wo', 'ya', 'yo'
-])
-
-/**
- * A run of words distinctive enough to name a series: at least two real
- * words, and at least one of them not the genre's own vocabulary.
- */
-const distinctive = (run: string[]): boolean => {
-    const words = run.filter((word) => !PARTICLES.has(word))
-    return words.length >= 2 && words.some((word) => word.length >= 4 && !GENERIC_WORDS.has(word) && !/^\d+$/.test(word))
-}
-
-/** One name continues the other: "Aimai na Bokura" and "Aimai na Bokura Kanojo wa…". */
-export const sharesLead = (a: string, b: string): boolean => {
-    const x = keyWords(a)
-    const y = keyWords(b)
-    const short = x.length <= y.length ? x : y
-    const long = short === x ? y : x
-    return distinctive(short) && short.every((word, index) => long[index] === word)
-}
-
-/**
- * The two end in the same distinctive words. On its own that would be far too
- * loose, so it is only ever asked of galleries by the same artist -- where it
- * is exactly the shape of a series whose every volume leads with a title of
- * its own: "COSBITCH! Marked-girls Origin" and "Netoria Marked-girls Origin",
- * or "Toxic JK Netorare Jigo Houkoku" and "NTR Jigo Houkoku".
- */
-export const sharesTail = (a: string, b: string): boolean => {
-    const x = keyWords(a)
-    const y = keyWords(b)
-    const run: string[] = []
-    for (let offset = 1; offset <= Math.min(x.length, y.length); offset++) {
-        if (x[x.length - offset] !== y[y.length - offset]) break
-        run.unshift(x[x.length - offset] as string)
-    }
-    return distinctive(run)
-}
-
-/**
- * A whole book's title up to its own subtitle, as a series key -- or '' when
- * what is left is too generic to tell one book from another by.
- */
-const bookRoot = (clean: string): string => {
-    let cut = clean.length
-    for (const separator of SUBTITLE_SEPARATORS) {
-        const at = clean.indexOf(separator)
-        if (at >= 4 && at < cut) cut = at
-    }
-    const root = seriesKey(clean.slice(0, cut))
-    return distinctive(root.split(' ').filter((word) => word.length > 0)) ? root : ''
-}
-
-/**
- * The circle and artist a gallery is credited to, "[Marked-two (Suga Hideo)]",
- * read off the front of its raw title and normalised so "Marked-Two" and
- * "Marked-two" agree. Event prefixes such as "(C97)" come first and are
- * skipped. '' when the title credits no one.
- *
- * A listing entry carries its tags only as bare ids, so this is how two tiles
- * can be known to be the same people's work without a request.
- */
-export const creatorOf = (raw: string): string => {
-    const match = /^\s*(?:\([^)]*\)\s*)*\[([^\]]+)\]/.exec(raw)
-    return match ? seriesKey(match[1] as string) : ''
-}
+import {
+    cleanTitle,
+    FoldItem,
+    FoldMemo,
+    foldedInto,
+    foldTiles,
+    isLongName,
+    nothingToShow,
+    orderVolumes,
+    seriesKey,
+    splitTitle,
+    volumeOf
+} from './SeriesMerge'
+export { cleanTitle, creatorOf, seriesKey, sharesLead, sharesTail, splitTitle } from './SeriesMerge'
 
 const SERIES_PREFIX = 's:'
 export const seriesIdFor = (title: string): string => `${SERIES_PREFIX}${splitTitle(title).base}`
@@ -491,7 +250,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '2.3.1',
+    version: '2.3.2',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -746,422 +505,112 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
     }
 
     /**
-     * Collapses the volumes on a page into one entry per series, the way
-     * HentaiNexus does: the lowest-numbered volume supplies the cover, and the
-     * series name is what the entry is called.
-     *
-     * `seen` carries the series already handed out by earlier pages, so a
-     * series straddling a page boundary is not emitted twice. Its keys record
-     * whether a name was read off a numbered volume (`t:`) or is one book's own
-     * long name (`n:`), because that decides which way a continuing name may
-     * fold: "Aimai na Bokura Kanojo wa…" folds into "Aimai na Bokura", but
-     * "Marked-girls Collection" -- numbered itself, a line of its own -- must
-     * never fold into "Marked-girls".
+     * Collapses a page of listing entries into one tile per series. The fold
+     * itself is foldTiles in SeriesMerge.ts, shared with AsmHentai, so the
+     * two sources merge by exactly the same rules; this holds the entries to
+     * this source's own first -- English, the standing exclusions, known
+     * parodies -- and remembers each, so that opening it costs no request.
      */
     private tilesFrom(entries: ApiListing[], seen: Set<string>, parodies?: Set<number>): PartialSourceManga[] {
-        // `own` is the entry a tile was made from and `folded` every other
-        // entry merged into it on this page; both are handed to the series
-        // when the tile is shown, so opening it gathers exactly what it stood
-        // for (see foldInto).
-        const series: {
-            key: string; id: string; title: string; volume: number; thumb: string
-            book: boolean; numbered: boolean; clean: string; creator: string; own: ApiListing; folded: ApiListing[]
-        }[] = []
-
+        const items: FoldItem<ApiListing>[] = []
         for (const entry of entries) {
             if (!this.admitted(entry.tag_ids, parodies)) continue
 
-            const raw = (entry.english_title ?? entry.japanese_title ?? `Gallery ${entry.id}`).trim()
-            const { base, volume, marked, numbered } = splitTitle(raw, isMultiWork(entry.tag_ids))
-            const thumb = (entry.thumbnail ?? '').replace(/^\/+/, '')
-            const clean = cleanTitle(raw) || raw
-            const creator = creatorOf(raw)
-
-            // Whether this name is one book's own full title, as opposed to a
-            // series name -- read off a numbered volume, or cut from a longer
-            // title at its subtitle ("Ano Hi, Sunao ni…" out of "Ano Hi, Sunao
-            // ni… - If only I could…"). A book's name folds into the series
-            // name it continues; a series name never folds into another.
-            const book = !numbered && seriesKey(base) === seriesKey(clean)
-
-            // A numbered gallery, or one the site tags as part of a multi-work
-            // series, becomes a series: it is the one that can have siblings
-            // worth looking up. Any other gallery keeps its own id, which is
-            // what lets it open on a single request.
-            //
-            // Both kinds are still keyed on the title, so the several galleries
-            // this site carries of one unnumbered work collapse to a single
-            // tile instead of filling the page with repeats.
-            const key = seriesKey(base)
-            const id = marked ? `s:${base}` : String(entry.id)
-            const title = marked ? base : clean
-
-            // The listing entry is kept so that opening this gallery costs no
-            // request at all: it already carries the media id, page count and
+            // The listing entry already carries the media id, page count and
             // tag ids, which is everything the details screen needs.
             this.remember(`l:${entry.id}`, entry, 1800000)
 
-            const same = series.find((other) => other.key === key)
-            if (same != undefined) {
-                // The lowest-numbered volume on the page supplies the cover.
-                if (volume < same.volume) {
-                    same.volume = volume
-                    same.thumb = thumb
-                }
-                same.folded.push(entry)
-                continue
-            }
-            if (seen.has(`t:${key}`) || seen.has(`n:${key}`)) {
-                const tileRef = this.remembered<string>(`k:t:${key}`) ?? this.remembered<string>(`k:n:${key}`)
-                this.foldInto(tileRef, [entry])
-                this.recordMember(seen, entry, tileRef)
-                continue
-            }
-
-            // A book's root is its title up to its own subtitle. Two books with
-            // one root are one book uploaded twice -- "Boku no Mizugi ga
-            // Kakusarete" and "… - My Swimsuit Got Stolen" -- and the root is
-            // remembered across pages, because the pair is as likely to be a
-            // page apart as side by side.
-            const root = book ? bookRoot(clean) : ''
-            if (root.length > 0) {
-                if (seen.has(`r:${root}`)) continue
-                seen.add(`r:${root}`)
-            }
-
-            // One name continuing another. A book's own name folds into the
-            // series name it continues; a series name never folds into another,
-            // which is what keeps "Marked-girls Collection" beside "Marked-girls".
-            let folded = false
-            for (const other of series) {
-                if (!sharesLead(other.key, key)) continue
-
-                if (key.length > other.key.length && book && !other.book) {
-                    folded = true
-                } else if (key.length < other.key.length && !book && other.book) {
-                    // The page led with the opener's long name; the series it
-                    // belongs to takes the tile over.
-                    other.key = key
-                    other.id = `s:${base}`
-                    other.title = base
-                    other.book = false
-                    other.clean = clean
-                    if (volume < other.volume) {
-                        other.volume = volume
-                        other.thumb = thumb
-                    }
-                    folded = true
-                } else if (book && other.book) {
-                    // Two names that are each a whole book fold only when they
-                    // share a root. "Hitozuma Kyoushi" and "Hitozuma Kyoushi no
-                    // Himitsu" have different roots: two books, and they stay two.
-                    folded = root.length > 0 && bookRoot(other.clean) === root
-                }
-                if (folded) {
-                    other.folded.push(entry)
-                    break
-                }
-            }
-            if (!folded) {
-                for (const emitted of seen) {
-                    // Roots and creator records are records of their own, not
-                    // names to fold into.
-                    if (emitted.startsWith('r:') || emitted.startsWith('a:')) continue
-                    const other = emitted.slice(2)
-                    if (!sharesLead(other, key)) continue
-
-                    // Already on screen from an earlier page, either as the
-                    // series this continues or as the opener that will gather
-                    // this volume when it is opened.
-                    const otherIsBook = emitted.startsWith('n:')
-                    if ((key.length > other.length && book && !otherIsBook)
-                        || (key.length < other.length && !book && otherIsBook)) {
-                        const tileRef = this.remembered<string>(`k:${emitted}`)
-                        if (tileRef != undefined && tileRef.startsWith('#')) {
-                            // The earlier tile is a single book already on
-                            // screen, and a tile cannot become a series after
-                            // the fact. Skipping this one used to lose the
-                            // series altogether behind a one-book tile, so it
-                            // is shown -- as the series tile, taking the book.
-                            if (marked) this.adopt(seriesKey(base), tileRef)
-                            break
-                        }
-                        this.foldInto(tileRef, [entry])
-                        this.recordMember(seen, entry, tileRef)
-                        folded = true
-                        break
-                    }
-                }
-            }
-
-            // Same creator, related names: one series. Two relations count.
-            //
-            // The same distinctive ending, every volume leading with a title of
-            // its own -- "Netoria Marked-girls Origin" and "pa:Costa Del Sol
-            // Marked girls Origin", or "Toxic JK Netorare Jigo Houkoku" and "NTR
-            // Jigo Houkoku 2 After".
-            //
-            // The same distinctive start, the longer name continuing the shorter
-            // with an arc or a book of its own -- "Tonari no Ayane-san" and
-            // "Tonari no Ayane-san Desaki Battari Hen". The site tags only some
-            // of these as a multi-work series, so the credit decides, not the
-            // tag. A longer name numbered in its own right is a line of its own
-            // -- "Marked-girls Collection Vol. 3" beside "Marked-girls" -- and
-            // stays apart.
-            //
-            // Either relation alone would be far too loose -- "…Choukyou Nikki"
-            // ends any number of unrelated books -- so the credit has to match.
-            const continues = (shortKey: string, longKey: string, longNumbered: boolean): boolean =>
-                shortKey.length < longKey.length && !longNumbered && sharesLead(shortKey, longKey)
-
-            if (!folded && creator.length > 0) {
-                const other = series.find((candidate) => candidate.creator === creator
-                    && (sharesTail(candidate.key, key)
-                        || continues(candidate.key, key, numbered)
-                        || continues(key, candidate.key, candidate.numbered)))
-                if (other != undefined) {
-                    if (continues(key, other.key, other.numbered)) {
-                        // This name is the series the tile's own name continues.
-                        // The tile takes it, so that opening finds both: a search
-                        // for the shorter name matches the longer one too.
-                        other.key = key
-                        other.id = `s:${base}`
-                        other.title = base
-                        other.numbered = numbered
-                    } else if (!other.id.startsWith('s:')) {
-                        // The merged tile has to open as a series: a bare gallery
-                        // id opens as the one book it names. When the tile is the
-                        // shorter name, it stays the name.
-                        const takeThis = marked && !continues(other.key, key, numbered)
-                        other.id = takeThis ? `s:${base}` : `s:${other.title}`
-                        if (takeThis) other.title = base
-                    }
-                    other.book = false
-                    if (volume < other.volume) {
-                        other.volume = volume
-                        other.thumb = thumb
-                    }
-                    other.folded.push(entry)
-                    folded = true
-                } else {
-                    // A tile from an earlier page, credited to the same creator,
-                    // with a related name. Every relation counts, in either
-                    // direction: this one sharing its ending, continuing its
-                    // name, or being the shorter series name its name continues
-                    // -- an arc shown a page before the series it belongs to.
-                    //
-                    // An earlier series tile takes this one in, and opens with
-                    // it. An earlier single book cannot: it is on screen as the
-                    // one book it names, and a tile cannot become a series after
-                    // the fact. So this one is shown as the series tile, and
-                    // takes the book with it.
-                    const prefix = `a:${creator}|`
-                    for (const emitted of seen) {
-                        if (!emitted.startsWith(prefix)) continue
-                        const earlier = emitted.slice(prefix.length)
-                        const earlierNumbered = this.remembered<boolean>(`q:${emitted}`) ?? true
-                        if (!(sharesTail(earlier, key) || continues(earlier, key, numbered) || continues(key, earlier, earlierNumbered))) continue
-
-                        const tileRef = this.remembered<string>(`k:${emitted}`)
-                        if (tileRef != undefined && tileRef.startsWith('#')) {
-                            if (marked) this.adopt(seriesKey(base), tileRef)
-                        } else {
-                            this.foldInto(tileRef, [entry])
-                            this.recordMember(seen, entry, tileRef)
-                            folded = true
-                        }
-                        break
-                    }
-                }
-            }
-            if (folded) continue
-
-            series.push({
-                key: key, id: id, title: title, volume: volume, thumb: thumb,
-                book: book, numbered: numbered, clean: clean, creator: creator, own: entry, folded: []
+            const thumb = (entry.thumbnail ?? '').replace(/^\/+/, '')
+            items.push({
+                id: String(entry.id),
+                raw: (entry.english_title ?? entry.japanese_title ?? `Gallery ${entry.id}`).trim(),
+                thumb: thumb.length > 0 ? `${NH_THUMB_CDN}/${thumb}` : '',
+                multiWork: isMultiWork(entry.tag_ids),
+                payload: entry
             })
         }
 
-        const tiles: PartialSourceManga[] = []
-        for (const entry of series) {
-            const key = `${entry.book ? 'n' : 't'}:${entry.key}`
-            if (seen.has(key)) continue
-            seen.add(key)
+        return foldTiles(items, seen, this.foldMemo).map((tile) => App.createPartialSourceManga({
+            mangaId: tile.id,
+            image: tile.thumb,
+            title: tile.title
+        }))
+    }
 
-            // Every tile leaves records that a later page's fold is matched
-            // against, saying what the tile stands for: a series tile, its
-            // series' key; a single book's tile, its gallery id. Only a series
-            // tile has anything to hand on -- a single book opens as itself.
-            const tileRef = entry.id.startsWith('s:') ? seriesKey(entry.id.slice(2)) : `#${entry.id}`
-            if (entry.id.startsWith('s:')) this.foldInto(tileRef, [entry.own, ...entry.folded])
-            this.remember(`k:${key}`, tileRef, 1800000)
-            if (entry.creator.length > 0) {
-                const record = `a:${entry.creator}|${entry.key}`
-                seen.add(record)
-                this.remember(`k:${record}`, tileRef, 1800000)
-                this.remember(`q:${record}`, entry.numbered, 1800000)
-            }
-
-            // Every gallery the tile holds is recorded as a member, not only
-            // the name it shows. A tile named for one arc that has taken in its
-            // series name must be findable by that name too: the next arc
-            // continues the series name, and shares nothing with the first arc
-            // but the word "Hen".
-            for (const member of entry.id.startsWith('s:') ? [entry.own, ...entry.folded] : [entry.own]) {
-                this.recordMember(seen, member, tileRef)
-            }
-
-            tiles.push(App.createPartialSourceManga({
-                mangaId: entry.id,
-                image: entry.thumb.length > 0 ? `${NH_THUMB_CDN}/${entry.thumb}` : '',
-                title: entry.title
-            }))
+    /** This source's memo, as the shared fold sees it. */
+    private get foldMemo(): FoldMemo {
+        return {
+            remember: (key: string, value: unknown, ttl?: number) => this.remember(key, value, ttl),
+            remembered: <V>(key: string) => this.remembered<V>(key)
         }
-
-        return tiles
-    }
-
-    /**
-     * Hands listing entries to the series a tile opens as, remembered under the
-     * series' key -- which is where volumesOf looks -- for half an hour, the
-     * same as the listing entries themselves.
-     */
-    private foldInto(tileKey: string | undefined, entries: ApiListing[]): void {
-        if (tileKey == undefined || tileKey.startsWith('#') || entries.length === 0) return
-
-        const list = this.remembered<ApiListing[]>(`f:${tileKey}`) ?? []
-        for (const entry of entries) {
-            if (!list.some((known) => known.id === entry.id)) list.push(entry)
-        }
-        this.remember(`f:${tileKey}`, list, 1800000)
-    }
-
-    /**
-     * Hands a single book already on screen -- `#id` -- to a series shown
-     * after it, so the series opens with the book it follows.
-     */
-    private adopt(tileKey: string, ref: string): void {
-        const book = this.remembered<ApiListing>(`l:${ref.slice(1)}`)
-        if (book != undefined) this.foldInto(tileKey, [book])
-    }
-
-    /**
-     * Records a gallery as a member of the tile `tileRef`, under its creator
-     * and its own series key, so that a later page's fold can find the tile
-     * through any gallery it holds.
-     */
-    private recordMember(seen: Set<string>, entry: ApiListing, tileRef: string | undefined): void {
-        if (tileRef == undefined) return
-
-        const raw = (entry.english_title ?? entry.japanese_title ?? '').trim()
-        const creator = creatorOf(raw)
-        if (creator.length === 0) return
-
-        const split = splitTitle(raw, isMultiWork(entry.tag_ids))
-        const record = `a:${creator}|${seriesKey(split.base)}`
-        seen.add(record)
-        this.remember(`k:${record}`, tileRef, 1800000)
-        this.remember(`q:${record}`, split.numbered, 1800000)
     }
 
     /**
      * Every gallery belonging to `base`, ordered by volume.
      *
      * The first search is for the name itself, which finds every volume that
-     * leads with it. Then the artist's own English catalogue is searched as
-     * well: that is where the volumes that lead with a title of their own are
-     * -- the "COSBITCH!", "Netoria" and "TotonoIki!" books of Marked-girls
-     * Origin, or the first NTR Jigo Houkoku, published as "Toxic JK Netorare
-     * Jigo Houkoku". From there a gallery joins only if its name ends in the
-     * same distinctive words, which keeps the circle's other lines apart.
+     * leads with it. Everything the listing folded into the tile is added on
+     * its word. Then the artist's own English catalogue is searched: that is
+     * where the volumes that lead with a title of their own are -- the
+     * "COSBITCH!", "Netoria" and "TotonoIki!" books of Marked-girls Origin, or
+     * the first NTR Jigo Houkoku, published as "Toxic JK Netorare Jigo
+     * Houkoku". Which of them belong is decided by volumeOf in SeriesMerge.ts,
+     * shared with AsmHentai.
      *
      * Every result is held to the same rules as a listing -- English, the
      * standing exclusions, no parodies -- so a series never gains a chapter the
-     * gate would refuse. The same book uploaded twice, two scanlations of one
-     * volume, is listed once, the newer upload kept.
+     * gate would refuse. The same book uploaded twice is listed once.
      */
     private async volumesOf(base: string): Promise<{ id: number; title: string; volume: number }[]> {
-        const wanted = seriesKey(base)
-        const cacheKey = `v:${wanted}`
+        const cacheKey = `v:${seriesKey(base)}`
         const cached = this.remembered<{ id: number; title: string; volume: number }[]>(cacheKey)
         if (cached != undefined) return cached
 
         const parodies = await this.parodyIds()
-        const found = new Map<number, { id: number; title: string; volume: number; multiWork: boolean }>()
+        const found = new Map<number, { id: number; title: string; volume: number }>()
         const books = new Set<string>()
+
+        // Volumes of this very series that the rules refused -- what tells
+        // "everything here is excluded" from "nothing was found".
+        let refused = 0
+
+        const candidate = (entry: ApiListing): { raw: string; multiWork: boolean } => ({
+            raw: (entry.english_title ?? entry.japanese_title ?? '').trim(),
+            multiWork: isMultiWork(entry.tag_ids)
+        })
 
         const byName = (await this.fetchJson<{ result?: ApiListing[] }>(
             this.searchUrl(seriesQuery(base), 'date', 1)
         )).result ?? []
-
-        // Whether `base` is one book's own long name rather than a series name
-        // read off numbered volumes. Only then may a shorter numbered name --
-        // the series that book opens -- be gathered into it.
-        const longName = byName.some((entry) => {
-            const raw = (entry.english_title ?? entry.japanese_title ?? '').trim()
-            return seriesKey(cleanTitle(raw) || raw) === wanted && !splitTitle(raw, isMultiWork(entry.tag_ids)).numbered
-        })
-
-        // Volumes of this very series that the rules refused. It is what tells
-        // "everything here is excluded" from "nothing was found", which matters
-        // for an entry already in the library: both used to read as "No volumes
-        // found", which looks like a fault rather than the rules at work.
-        let refused = 0
+        const longName = isLongName(byName.map(candidate), base)
 
         const consider = (entries: ApiListing[], sameArtist: boolean, trusted: boolean = false): void => {
             for (const entry of entries) {
                 if (found.has(entry.id)) continue
 
-                const raw = (entry.english_title ?? entry.japanese_title ?? '').trim()
-                const split = splitTitle(raw, isMultiWork(entry.tag_ids))
-                const key = seriesKey(split.base)
-
-                // A longer name continuing `base` belongs unless it is numbered in
-                // its own right, a line of its own. A shorter name belongs only
-                // when `base` is one book's long name that continues it -- and,
-                // unnumbered, only from the artist's own works: "Tonari no
-                // Ayane-san Desaki Battari Hen" reaching back to "Tonari no
-                // Ayane-san", the series its arc belongs to.
-                let belongs = key === wanted
-                if (!belongs && sharesLead(key, wanted)) {
-                    belongs = key.length > wanted.length ? !split.numbered : (longName && (split.numbered || sameArtist))
-                }
-                if (!belongs && sameArtist) belongs = sharesTail(key, wanted)
-                // A gallery the listing itself folded into this tile is taken
-                // on its word: what the tile stood for is what it opens with.
-                if (!belongs && !trusted) continue
+                const verdict = volumeOf(candidate(entry), base, longName, sameArtist, trusted)
+                if (!verdict.belongs) continue
 
                 if (!this.admitted(entry.tag_ids, parodies)) {
                     refused++
                     continue
                 }
+                if (books.has(verdict.book)) continue
+                books.add(verdict.book)
 
-                const title = cleanTitle(raw) || raw
-                const book = `${split.volume}|${seriesKey(title)}`
-                if (books.has(book)) continue
-                books.add(book)
-
-                found.set(entry.id, { id: entry.id, title: title, volume: split.volume, multiWork: isMultiWork(entry.tag_ids) })
+                found.set(entry.id, { id: entry.id, title: verdict.title, volume: verdict.volume })
             }
         }
 
         consider(byName, false)
+        consider(foldedInto<ApiListing>(this.foldMemo, base).map((item) => item.payload), true, true)
 
-        // Every gallery the listing folded into this tile. The artist search
-        // below reads one page, the artist's twenty-five newest works; for a
-        // circle as prolific as Marked-two, the older Origin volumes are past
-        // it -- and a volume the listing had folded away, but that the open
-        // could not find, simply vanished. What a tile stood for in the listing
-        // is what it opens with, at no cost: the entries are already in hand.
-        consider(this.remembered<ApiListing[]>(`f:${wanted}`) ?? [], true, true)
-
-        // Always, now that listings merge a creator's volumes by their shared
-        // ending: a tile built that way has to open with every volume it stands
-        // for, even when its own name search already found two. It costs one
-        // request when a series is opened, never while browsing.
+        // Always, since listings merge a creator's volumes by their shared
+        // name: a tile built that way has to open with every volume it stands
+        // for. It costs one request when a series is opened, never browsing.
         if (found.size > 0) {
             try {
-                const first = Array.from(found.values()).sort((a, b) => a.volume - b.volume)[0] as { id: number }
+                const first = orderVolumes(Array.from(found.values()))[0] as { id: number }
                 const tags = (await this.gallery(first.id)).tags ?? []
                 const creator = tags.find((tag) => tag.type === 'artist') ?? tags.find((tag) => tag.type === 'group')
 
@@ -1176,29 +625,11 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             }
         }
 
-        const volumes = Array.from(found.values())
-            .sort((a, b) => a.volume - b.volume || a.id - b.id)
-            .map((volume) => ({ id: volume.id, title: volume.title, volume: volume.volume }))
-
-        // A final part ("Kanketsu-ban") is numbered one past the last volume.
-        let next = volumes.filter((volume) => volume.volume < FINAL)
-            .reduce((highest, volume) => Math.max(highest, Math.floor(volume.volume)), 0) + 1
-        for (const volume of volumes) {
-            if (volume.volume >= FINAL) volume.volume = next++
-        }
+        const volumes = orderVolumes(Array.from(found.values()))
 
         // Not remembered when empty: a rate-limited search would otherwise
         // leave the entry unopenable for the whole cache lifetime.
-        //
-        // Usually the two causes cannot be told apart: every search already
-        // negates the excluded tags, so the site never returns an excluded
-        // volume for the source to see and refuse. Then the message names both
-        // rules, because either may be why -- and neither is a fault.
-        if (volumes.length === 0) {
-            throw new Error(refused > 0
-                ? `Every volume of "${base}" is left out by your settings (an excluded tag or a parody), so it will not be shown.`
-                : `No volumes of "${base}" can be shown: this source shows English galleries only, and leaves out anything your settings exclude.`)
-        }
+        if (volumes.length === 0) throw new Error(nothingToShow(base, refused, true))
 
         this.remember(cacheKey, volumes)
         return volumes

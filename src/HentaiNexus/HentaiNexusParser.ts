@@ -55,50 +55,15 @@ export const isLastPage = (cards: GalleryCard[]): boolean => {
     return cards.length < HN_PAGE_SIZE
 }
 
-/** Volume numbers are not always whole: "… 4.5" sits between 4 and 5. */
-const VOLUME = '(\\d{1,3}(?:\\.\\d{1,2})?)'
-
 /**
- * A volume is often followed by its own subtitle ("… 4: Sensuous Moans"), so
- * the number is not necessarily the end of the title. The separator is required
- * before a subtitle, which keeps "Title 2 Extra" from being read as volume 2.
+ * Volume numbers are read with the rules shared with the nhentai and AsmHentai
+ * sources (../NHentai/SeriesMerge.ts), so a shape one site taught is read on
+ * all three: a subtitle after a tilde or a quote, Zenpen/Kouhen, "2 After" as
+ * volume 2.5, Roman numerals, "Part One", "Vol.2 Subtitle", a range such as
+ * "Ch. 1-3". This site's own season/episode numbering -- season 3 episode 4 as
+ * 3.04 -- was moved into the shared rules from here.
  */
-const SUBTITLE = '(?:\\s*[:\\-–—]\\s*.+)?'
-
-/**
- * Ways a volume number is written, most specific first. The keyword forms have
- * to be tried before the bare number: "Title Ch. 5" also matches the bare form,
- * but yields the base "Title Ch.", which groups correctly and then displays a
- * mangled series name.
- *
- * The leading group is lazy so the *first* number wins. Greedy matching would
- * read "Title 2: Sub 3" as volume 3 of "Title 2: Sub".
- */
-const VOLUME_PATTERNS: RegExp[] = [
-    new RegExp(`^(.*?\\S)\\s+(?:ch\\.?|chapter)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
-    new RegExp(`^(.*?\\S)\\s+(?:vol\\.?|volume)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
-    new RegExp(`^(.*?\\S)\\s+(?:part|pt\\.?)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
-    // "... Season 3 ep.4: Subtitle". The episode keyword has to be
-    // recognised or nothing matches at all: the bare-number form needs
-    // whitespace before the digit and "ep.4" has a period there, so every
-    // episode became its own entry. Matching it groups a season together.
-    new RegExp(`^(.*?\\S)\\s+(?:ep\\.?|episode)\\s*${VOLUME}${SUBTITLE}$`, 'i'),
-    new RegExp(`^(.*?\\S)\\s*#\\s*${VOLUME}${SUBTITLE}$`),
-    new RegExp(`^(.*?\\S)\\s+${VOLUME}${SUBTITLE}$`)
-]
-
-/**
- * "... Season 3 ep.4: Subtitle". Season and episode fold into a single number
- * so that every season of a work lands in one series rather than one entry per
- * season: season 3 episode 4 becomes 3.04.
- *
- * The episode is divided by a hundred rather than ten so episode 10 still
- * sorts after episode 9 -- 3.10 would otherwise read as the smaller 3.1.
- *
- * Checked before the patterns above, which would otherwise stop at the season
- * and leave the base as "... Season 3".
- */
-const SEASON_EPISODE = new RegExp(`^(.*?\\S)\\s+season\\s*(\\d{1,2})\\s*(?:ep\\.?|episode)\\s*(\\d{1,3})${SUBTITLE}$`, 'i')
+import { splitClean } from '../NHentai/SeriesMerge'
 
 /**
  * Suffixes that mark a compilation rather than a further instalment. The site
@@ -109,35 +74,17 @@ const COMPILATION = new RegExp('\\b(anthology|side stor(?:y|ies)|complete collec
 
 /**
  * The site has no series field, so volumes are inferred from the title: a
- * trailing volume number is stripped and what precedes it is the series.
- * "Bedded by Your Best Friend 5" -> base "Bedded by Your Best Friend", volume 5.
+ * volume number is stripped and what precedes it is the series. "Bedded by
+ * Your Best Friend 5" -> base "Bedded by Your Best Friend", volume 5.
  *
- * This necessarily mis-groups a standalone work whose title merely ends in a
- * number, and misses sequels numbered some other way entirely.
+ * Titles here are English and carry no credit brackets, and a parenthesis is
+ * part of the name, so they are split as they are rather than cleaned first.
+ * A number glued to the last word ("Room404") is part of a name here too, not
+ * a volume, so that rule is left out.
  */
 export const splitTitle = (title: string): { base: string; volume: number } => {
-    const trimmed = title.trim()
-
-    // Season/episode numbering is folded into one number so a work with
-    // several seasons stays a single series.
-    const seasonal = SEASON_EPISODE.exec(trimmed)
-    if (seasonal) {
-        const base = (seasonal[1] as string).replace(/[\s\-–—:,]+$/, '').trim()
-        if (base.length > 0) {
-            return { base, volume: Number(seasonal[2]) + Number(seasonal[3]) / 100 }
-        }
-    }
-
-    for (const pattern of VOLUME_PATTERNS) {
-        const match = pattern.exec(trimmed)
-        if (!match) continue
-
-        // Drop any separator left dangling once the number is removed.
-        const base = (match[1] as string).replace(/[\s\-–—:,]+$/, '').trim()
-        if (base.length > 0) return { base, volume: Number(match[2]) }
-    }
-
-    return { base: trimmed, volume: 1 }
+    const split = splitClean(title.trim(), false, false)
+    return { base: split.base, volume: split.volume }
 }
 
 /**
