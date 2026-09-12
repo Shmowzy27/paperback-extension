@@ -730,6 +730,7 @@ var _Sources = (() => {
     NHentaiInfo: () => NHentaiInfo,
     baseFromSeriesId: () => baseFromSeriesId,
     cleanTitle: () => cleanTitle,
+    creatorOf: () => creatorOf,
     isSeriesId: () => isSeriesId,
     searchTermFor: () => searchTermFor,
     seriesIdFor: () => seriesIdFor,
@@ -1037,6 +1038,10 @@ var _Sources = (() => {
     const root = seriesKey(clean.slice(0, cut));
     return distinctive(root.split(" ").filter((word) => word.length > 0)) ? root : "";
   };
+  var creatorOf = (raw) => {
+    const match = /^\s*(?:\([^)]*\)\s*)*\[([^\]]+)\]/.exec(raw);
+    return match ? seriesKey(match[1]) : "";
+  };
   var SERIES_PREFIX = "s:";
   var seriesIdFor = (title) => `${SERIES_PREFIX}${splitTitle(title).base}`;
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
@@ -1054,7 +1059,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "2.1.0",
+    version: "2.2.0",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -1285,6 +1290,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         const { base, volume, marked, numbered } = splitTitle(raw, isMultiWork(entry.tag_ids));
         const thumb = (entry.thumbnail ?? "").replace(/^\/+/, "");
         const clean = cleanTitle(raw) || raw;
+        const creator = creatorOf(raw);
         const book = !numbered && seriesKey(base) === seriesKey(clean);
         const key = seriesKey(base);
         const id = marked ? `s:${base}` : String(entry.id);
@@ -1296,9 +1302,13 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
             same.volume = volume;
             same.thumb = thumb;
           }
+          same.folded.push(entry);
           continue;
         }
-        if (seen.has(`t:${key}`) || seen.has(`n:${key}`)) continue;
+        if (seen.has(`t:${key}`) || seen.has(`n:${key}`)) {
+          this.foldInto(this.remembered(`k:t:${key}`) ?? this.remembered(`k:n:${key}`), [entry]);
+          continue;
+        }
         const root = book ? bookRoot(clean) : "";
         if (root.length > 0) {
           if (seen.has(`r:${root}`)) continue;
@@ -1323,28 +1333,78 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
           } else if (book && other.book) {
             folded = root.length > 0 && bookRoot(other.clean) === root;
           }
-          if (folded) break;
+          if (folded) {
+            other.folded.push(entry);
+            break;
+          }
         }
         if (!folded) {
           for (const emitted of seen) {
-            if (emitted.startsWith("r:")) continue;
+            if (emitted.startsWith("r:") || emitted.startsWith("a:")) continue;
             const other = emitted.slice(2);
             if (!sharesLead(other, key)) continue;
             const otherIsBook = emitted.startsWith("n:");
             if (key.length > other.length && book && !otherIsBook || key.length < other.length && !book && otherIsBook) {
+              this.foldInto(this.remembered(`k:${emitted}`), [entry]);
               folded = true;
               break;
             }
           }
         }
+        if (!folded && creator.length > 0) {
+          const other = series.find((candidate) => candidate.creator === creator && sharesTail(candidate.key, key));
+          if (other != void 0) {
+            if (!other.id.startsWith("s:")) {
+              other.id = marked ? `s:${base}` : `s:${other.title}`;
+              if (marked) other.title = base;
+            }
+            other.book = false;
+            if (volume < other.volume) {
+              other.volume = volume;
+              other.thumb = thumb;
+            }
+            other.folded.push(entry);
+            folded = true;
+          } else {
+            const prefix = `a:${creator}|`;
+            for (const emitted of seen) {
+              if (emitted.startsWith(prefix) && sharesTail(emitted.slice(prefix.length), key)) {
+                this.foldInto(this.remembered(`k:${emitted}`), [entry]);
+                folded = true;
+                break;
+              }
+            }
+          }
+        }
         if (folded) continue;
-        series.push({ key, id, title, volume, thumb, book, clean });
+        series.push({
+          key,
+          id,
+          title,
+          volume,
+          thumb,
+          book,
+          clean,
+          creator,
+          own: entry,
+          folded: []
+        });
       }
       const tiles = [];
       for (const entry of series) {
         const key = `${entry.book ? "n" : "t"}:${entry.key}`;
         if (seen.has(key)) continue;
         seen.add(key);
+        if (entry.id.startsWith("s:")) {
+          const tileKey = seriesKey(entry.id.slice(2));
+          this.foldInto(tileKey, [entry.own, ...entry.folded]);
+          this.remember(`k:${key}`, tileKey, 18e5);
+          if (entry.creator.length > 0) {
+            const record = `a:${entry.creator}|${entry.key}`;
+            seen.add(record);
+            this.remember(`k:${record}`, tileKey, 18e5);
+          }
+        }
         tiles.push(App.createPartialSourceManga({
           mangaId: entry.id,
           image: entry.thumb.length > 0 ? `${NH_THUMB_CDN}/${entry.thumb}` : "",
@@ -1354,11 +1414,23 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
       return tiles;
     }
     /**
+     * Hands listing entries to the series a tile opens as, remembered under the
+     * series' key -- which is where volumesOf looks -- for half an hour, the
+     * same as the listing entries themselves.
+     */
+    foldInto(tileKey, entries) {
+      if (tileKey == void 0 || entries.length === 0) return;
+      const list = this.remembered(`f:${tileKey}`) ?? [];
+      for (const entry of entries) {
+        if (!list.some((known) => known.id === entry.id)) list.push(entry);
+      }
+      this.remember(`f:${tileKey}`, list, 18e5);
+    }
+    /**
      * Every gallery belonging to `base`, ordered by volume.
      *
      * The first search is for the name itself, which finds every volume that
-     * leads with it. When that finds only one, or the site tags the work as a
-     * multi-work series, the artist's own English catalogue is searched as
+     * leads with it. Then the artist's own English catalogue is searched as
      * well: that is where the volumes that lead with a title of their own are
      * -- the "COSBITCH!", "Netoria" and "TotonoIki!" books of Marked-girls
      * Origin, or the first NTR Jigo Houkoku, published as "Toxic JK Netorare
@@ -1410,8 +1482,8 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         }
       };
       consider(byName, false);
-      const expand = found.size < 2 || Array.from(found.values()).some((volume) => volume.multiWork);
-      if (expand && found.size > 0) {
+      consider(this.remembered(`f:${wanted}`) ?? [], true);
+      if (found.size > 0) {
         try {
           const first = Array.from(found.values()).sort((a, b) => a.volume - b.volume)[0];
           const tags = (await this.gallery(first.id)).tags ?? [];
