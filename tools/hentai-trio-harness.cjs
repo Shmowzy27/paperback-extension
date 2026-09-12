@@ -258,21 +258,37 @@ const expectGateThrow = async (label, fn) => {
                 `${volPages.pages.length} pages`)
         }
 
-        await expectGateThrow('a yaoi gallery refuses to open', () => s.getMangaDetails('674659'))
+        // A yaoi gallery the content gate must refuse, taken live from the
+        // English yaoi listing. The fixture used to be 674659, which is not in
+        // English: once the source went English-only it was refused for its
+        // language before the content gate was ever reached, so the gate was
+        // no longer being tested at all.
+        await new Promise((r) => setTimeout(r, 7200))
+        const yaoiListing = await (await fetch('https://nhentai.net/api/v2/search?query='
+            + encodeURIComponent('tag:yaoi language:english') + '&sort=date&page=1', { headers: { 'user-agent': UA } })).json()
+        const yaoiId = String((yaoiListing.result ?? [])[0]?.id ?? '')
+        if (yaoiId) {
+            await expectGateThrow(`an English yaoi gallery refuses to open (${yaoiId})`, () => s.getMangaDetails(yaoiId))
+        } else {
+            note('could not sample an English yaoi gallery for the gate test')
+        }
 
         const search = await s.getSearchResults({ title: 'milf', includedTags: [], excludedTags: [], parameters: {} }, undefined)
         check('search returns results', search.results.length > 0, `${search.results.length} results`)
 
-        // The filter screen offers language, browsable catalogs read off the
-        // site, and the standing exclusions shown for visibility. The banned
-        // names sit inside the popular tag list, so the scrub is asserted on
-        // the catalogs rather than assumed.
+        // The filter screen offers browsable catalogs read off the site and the
+        // standing exclusions shown for visibility. It no longer offers a
+        // language: the source is English only, so Japanese and Chinese are
+        // not choices to be made. The banned names sit inside the popular tag
+        // list, so the scrub is asserted on the catalogs rather than assumed.
         const tags = await s.getSearchTags()
         const catalogs = tags.filter((sec) => ['tag', 'artist', 'parody'].includes(sec.id))
         const offered = catalogs.flatMap((sec) => sec.tags.map((t) => t.label.toLowerCase()))
-        check('language, tag catalogs and exclusions all offered',
-            tags[0]?.tags.length === 3
-                && catalogs.length === 3
+        check('no language other than English is offered',
+            !tags.some((sec) => sec.tags.some((t) => /^(japanese|chinese)$/i.test(t.label) && sec.id === 'language')),
+            tags.map((sec) => sec.id).join(', '))
+        check('tag catalogs and exclusions all offered',
+            catalogs.length === 3
                 && catalogs.every((sec) => sec.tags.length > 50)
                 && tags[tags.length - 1]?.id === 'excluded',
             tags.map((sec) => `${sec.id}:${sec.tags.length}`).join(' '))
