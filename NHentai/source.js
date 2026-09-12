@@ -731,6 +731,7 @@ var _Sources = (() => {
     baseFromSeriesId: () => baseFromSeriesId,
     cleanTitle: () => cleanTitle,
     creatorOf: () => creatorOf,
+    creatorsOf: () => creatorsOf,
     isSeriesId: () => isSeriesId,
     searchTermFor: () => searchTermFor,
     seriesIdFor: () => seriesIdFor,
@@ -972,9 +973,32 @@ var _Sources = (() => {
     const match = /^\s*(?:\([^)]*\)\s*)*\[([^\]]+)\]/.exec(raw);
     return match ? seriesKey(match[1]) : "";
   };
+  var ANONYMOUS_CREDITS = /* @__PURE__ */ new Set(["various", "anthology", "unknown", "english", "digital", "decensored", "uncensored"]);
+  var creatorsOf = (raw) => {
+    const match = /^\s*(?:\([^)]*\)\s*)*\[([^\]]+)\]/.exec(raw);
+    if (!match) return [];
+    const inner = match[1];
+    const paren = /^(.*?)\s*\(([^)]+)\)\s*$/.exec(inner);
+    const parts = paren ? [paren[1], ...paren[2].split(/[,&、]/)] : inner.split(/[,&、]/);
+    const names = [];
+    for (const part of parts) {
+      const name = seriesKey(part);
+      if (name.length >= 3 && !ANONYMOUS_CREDITS.has(name) && !names.includes(name)) names.push(name);
+    }
+    return names;
+  };
   var SERIES_PREFIX = "s:";
   var FOLD_TTL = 18e5;
   var foldedInto = (memo, base) => memo.remembered(`f:${seriesKey(base)}`) ?? [];
+  var creditsOf = (item) => {
+    const names = creatorsOf(item.raw);
+    for (const name of item.creators ?? []) {
+      if (name.length > 0 && !names.includes(name)) names.push(name);
+    }
+    return names;
+  };
+  var sharesCredit = (a, b) => a.some((name) => b.includes(name));
+  var continues = (shortKey, longKey, longNumbered) => shortKey.length < longKey.length && !longNumbered && sharesLead(shortKey, longKey);
   var foldTiles = (items, seen, memo) => {
     const series = [];
     const foldInto = (tileRef, more) => {
@@ -987,23 +1011,35 @@ var _Sources = (() => {
     };
     const recordMember = (item, tileRef) => {
       if (tileRef == void 0) return;
-      const creator = creatorOf(item.raw);
-      if (creator.length === 0) return;
       const split = splitTitle(item.raw, item.multiWork);
-      const record = `a:${creator}|${seriesKey(split.base)}`;
-      seen.add(record);
-      memo.remember(`k:${record}`, tileRef, FOLD_TTL);
-      memo.remember(`q:${record}`, split.numbered, FOLD_TTL);
+      const key = seriesKey(split.base);
+      for (const name of creditsOf(item)) {
+        const record = `a:${name}|${key}`;
+        seen.add(record);
+        memo.remember(`k:${record}`, tileRef, FOLD_TTL);
+        memo.remember(`q:${record}`, split.numbered, FOLD_TTL);
+      }
     };
     const adopt = (tileKey, ref) => {
       const book = memo.remembered(`i:${ref.slice(1)}`);
       if (book != void 0) foldInto(tileKey, [book]);
     };
-    const continues = (shortKey, longKey, longNumbered) => shortKey.length < longKey.length && !longNumbered && sharesLead(shortKey, longKey);
+    const absorb = (into, from) => {
+      into.folded.push(from.own, ...from.folded);
+      if (from.volume < into.volume) {
+        into.volume = from.volume;
+        into.thumb = from.thumb;
+      }
+      if (!into.id.startsWith(SERIES_PREFIX)) into.id = `${SERIES_PREFIX}${into.title}`;
+      into.book = false;
+      for (const name of from.creators) {
+        if (!into.creators.includes(name)) into.creators.push(name);
+      }
+    };
     for (const item of items) {
       const { base, volume, marked, numbered } = splitTitle(item.raw, item.multiWork);
       const clean = cleanTitle(item.raw) || item.raw;
-      const creator = creatorOf(item.raw);
+      const creators = creditsOf(item);
       const book = !numbered && seriesKey(base) === seriesKey(clean);
       const key = seriesKey(base);
       const id = marked ? `${SERIES_PREFIX}${base}` : item.id;
@@ -1017,6 +1053,9 @@ var _Sources = (() => {
           same.thumb = thumb;
         }
         same.folded.push(item);
+        for (const name of creators) {
+          if (!same.creators.includes(name)) same.creators.push(name);
+        }
         continue;
       }
       if (seen.has(`t:${key}`) || seen.has(`n:${key}`)) {
@@ -1073,8 +1112,8 @@ var _Sources = (() => {
           }
         }
       }
-      if (!folded && creator.length > 0) {
-        const other = series.find((candidate) => candidate.creator === creator && (sharesTail(candidate.key, key) || continues(candidate.key, key, numbered) || continues(key, candidate.key, candidate.numbered)));
+      if (!folded && creators.length > 0) {
+        const other = series.find((candidate) => sharesCredit(candidate.creators, creators) && (sharesTail(candidate.key, key) || continues(candidate.key, key, numbered) || continues(key, candidate.key, candidate.numbered)));
         if (other != void 0) {
           if (continues(key, other.key, other.numbered)) {
             other.key = key;
@@ -1092,12 +1131,16 @@ var _Sources = (() => {
             other.thumb = thumb;
           }
           other.folded.push(item);
+          for (const name of creators) {
+            if (!other.creators.includes(name)) other.creators.push(name);
+          }
           folded = true;
         } else {
-          const prefix = `a:${creator}|`;
           for (const emitted of seen) {
-            if (!emitted.startsWith(prefix)) continue;
-            const earlier = emitted.slice(prefix.length);
+            if (!emitted.startsWith("a:")) continue;
+            const bar = emitted.indexOf("|");
+            if (bar < 0 || !creators.includes(emitted.slice(2, bar))) continue;
+            const earlier = emitted.slice(bar + 1);
             const earlierNumbered = memo.remembered(`q:${emitted}`) ?? true;
             if (!(sharesTail(earlier, key) || continues(earlier, key, numbered) || continues(key, earlier, earlierNumbered))) continue;
             const tileRef = memo.remembered(`k:${emitted}`);
@@ -1122,10 +1165,28 @@ var _Sources = (() => {
         book,
         numbered,
         clean,
-        creator,
+        creators,
         own: item,
         folded: []
       });
+    }
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let i = 0; i < series.length && !changed; i++) {
+        for (let j = 0; j < series.length && !changed; j++) {
+          const a = series[i];
+          const b = series[j];
+          if (a === b) continue;
+          const credited = sharesCredit(a.creators, b.creators);
+          const byCredit = credited && (continues(a.key, b.key, b.numbered) || i < j && sharesTail(a.key, b.key));
+          const byName = a.key.length < b.key.length && b.book && !a.book && sharesLead(a.key, b.key);
+          if (!byCredit && !byName) continue;
+          absorb(a, b);
+          series.splice(j, 1);
+          changed = true;
+        }
+      }
     }
     const tiles = [];
     for (const entry of series) {
@@ -1136,8 +1197,8 @@ var _Sources = (() => {
       const tileRef = isSeries ? seriesKey(entry.id.slice(SERIES_PREFIX.length)) : `#${entry.id}`;
       if (isSeries) foldInto(tileRef, [entry.own, ...entry.folded]);
       memo.remember(`k:${key}`, tileRef, FOLD_TTL);
-      if (entry.creator.length > 0) {
-        const record = `a:${entry.creator}|${entry.key}`;
+      for (const name of entry.creators) {
+        const record = `a:${name}|${entry.key}`;
         seen.add(record);
         memo.remember(`k:${record}`, tileRef, FOLD_TTL);
         memo.remember(`q:${record}`, entry.numbered, FOLD_TTL);
@@ -1166,10 +1227,23 @@ var _Sources = (() => {
     }
     if (!belongs && sameArtist) belongs = sharesTail(key, wanted);
     const title = cleanTitle(candidate.raw) || candidate.raw;
-    return { belongs, volume: split.volume, title, book: `${split.volume}|${seriesKey(title)}` };
+    return {
+      belongs,
+      volume: split.volume,
+      numbered: split.numbered,
+      title,
+      book: `${split.volume}|${seriesKey(title)}`
+    };
   };
   var orderVolumes = (volumes) => {
     const ordered = volumes.slice().sort((a, b) => a.volume - b.volume || Number(a.id) - Number(b.id));
+    if (ordered.length > 1 && ordered.every((volume) => volume.numbered === false)) {
+      ordered.sort((a, b) => Number(a.id) - Number(b.id));
+      ordered.forEach((volume, index) => {
+        volume.volume = index + 1;
+      });
+      return ordered;
+    }
     let next = ordered.filter((volume) => volume.volume < FINAL).reduce((highest, volume) => Math.max(highest, Math.floor(volume.volume)), 0) + 1;
     for (const volume of ordered) {
       if (volume.volume >= FINAL) volume.volume = next++;
@@ -1281,7 +1355,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "2.3.2",
+    version: "2.4.0",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -1568,7 +1642,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
           }
           if (books.has(verdict.book)) continue;
           books.add(verdict.book);
-          found.set(entry.id, { id: entry.id, title: verdict.title, volume: verdict.volume });
+          found.set(entry.id, { id: entry.id, title: verdict.title, volume: verdict.volume, numbered: verdict.numbered });
         }
       };
       consider(byName, false);
