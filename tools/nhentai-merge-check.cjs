@@ -205,6 +205,19 @@ const SAME_CREATOR = [
     ['NTR Jigo Houkoku and its differently titled first book',
         [['[Mint no Chicchai Oana (Mint Muzzlini)] Toxic JK Netorare Jigo Houkoku... [English] [Solid Rose]', false],
             ['[Mint no Chicchai Oana (Mint Muzzlini)] NTR Jigo Houkoku 2 After [English]', true]], 1],
+    // Arcs named "… Hen" that continue the series name, from the broad English
+    // sample -- the site tags only some of them as a multi-work series, so the
+    // shared credit and the shared start are what tie them.
+    ['a series and its "Hen" arcs, the series name first',
+        [['[Arakure (Arakure)] Tonari no Ayane-san [English]', true],
+            ['[Arakure (Arakure)] Tonari no Ayane-san Desaki Battari Hen [English]', true],
+            ['[Arakure (Arakure)] Tonari no Ayane-san Itazura Jidori to Oshioki Ecchi Hen [English]', true]], 1],
+    ['a series and its "Hen" arc, the arc first on the page',
+        [['[Arakure (Arakure)] Tonari no Ayane-san Desaki Battari Hen [English]', true],
+            ['[Arakure (Arakure)] Tonari no Ayane-san [English]', true]], 1],
+    ['an untagged first book and its tagged arc',
+        [['[Hiroyuki (Hiroyuki)] Mukuchi na Tosho Iin to Sex Zuke [English]', false],
+            ['[Hiroyuki (Hiroyuki)] Mukuchi na Tosho Iin to Sex Zuke. Natsuyasumi Hen ~Sex zuke no Natsuyasumi~ [English]', true]], 1],
     // Must stay apart.
     ['the circle\'s main, Origin and Collection lines',
         [['[Marked-two (Suga Hideo)] Marked-girls Vol. 5 [English]', false],
@@ -256,7 +269,17 @@ const ACROSS = [
             [['[Mint no Chicchai Oana (Mint Muzzlini)] NTR Jigo Houkoku 2 After [English]', true]]], 2],
     ['Origin volumes a page apart',
         [[['(SC2018 Autumn) [Marked-two (Suga Hideo)] Netoria Marked-girls Origin Vol. 2 [English]', false]],
-            [['(C97) [Marked-two (Suga Hideo)] pa:Costa Del Sol Marked girls Origin Vol. 4 [English]', false]]], 1]
+            [['(C97) [Marked-two (Suga Hideo)] pa:Costa Del Sol Marked girls Origin Vol. 4 [English]', false]]], 1],
+    // A series name, then its arc a page later: the arc folds in.
+    ['a series name, then its "Hen" arc a page later',
+        [[['[Arakure (Arakure)] Tonari no Ayane-san [English]', true]],
+            [['[Arakure (Arakure)] Tonari no Ayane-san Desaki Battari Hen [English]', true]]], 1],
+    // The arc first: it is on screen under its own longer name before the
+    // series name turns up, and a tile cannot be renamed, so both appear. Each
+    // opens as a series, and the arc's reaches back to the series name.
+    ['a "Hen" arc, then its series name a page later',
+        [[['[Arakure (Arakure)] Tonari no Ayane-san Desaki Battari Hen [English]', true]],
+            [['[Arakure (Arakure)] Tonari no Ayane-san [English]', true]]], 2]
 ]
 for (const [label, pages, expected] of ACROSS) {
     const tiles = tilesAcross(pages)
@@ -332,6 +355,27 @@ const seriesOffline = async () => {
     const opened = await lister.getChapters(originTile.mangaId)
     check('series: a tile opens with every volume the listing folded into it, on one page or across pages',
         idsOf(opened) === '11,13,14', `${originTile.mangaId} -> ${opened.map((c) => `${c.chapNum}:${c.id}`).join(' ')}`)
+
+    // A series and its "Hen" arcs. Opened by the series name, its own name
+    // search finds every arc, since each arc's name continues it.
+    const AYANE = listed(21, '[Arakure (Arakure)] Tonari no Ayane-san [English]', [EN, MWS])
+    const ARC_1 = listed(22, '[Arakure (Arakure)] Tonari no Ayane-san Desaki Battari Hen [English]', [EN, MWS])
+    const ARC_2 = listed(23, '[Arakure (Arakure)] Tonari no Ayane-san Itazura Jidori to Oshioki Ecchi Hen [English]', [EN, MWS])
+    const bySeries = await fakeSeries([AYANE, ARC_1, ARC_2], []).getChapters('s:Tonari no Ayane-san')
+    check('series: a series name gathers the "Hen" arcs that continue it', idsOf(bySeries) === '21,22,23', idsOf(bySeries))
+
+    // Opened by an arc's own long name -- an arc shown alone, or bookmarked --
+    // it has to reach back to the series name it continues. Its name search
+    // cannot find that (the shorter title does not contain the longer), so it
+    // comes from the artist's catalogue.
+    const byArc = await fakeSeries([ARC_1], [AYANE, ARC_1]).getChapters('s:Tonari no Ayane-san Desaki Battari Hen')
+    check('series: an arc opened on its own name reaches back to its series', idsOf(byArc) === '21,22', idsOf(byArc))
+
+    // …but not to a numbered line of its own that happens to share the start.
+    const MAIN_5 = listed(31, '[Marked-two (Suga Hideo)] Marked-girls Vol. 5 [English]', [EN])
+    const COLLECTION_3 = listed(32, '[Marked-two (Suga Hideo)] Marked-girls Collection Vol. 3 [English]', [EN])
+    const byMain = await fakeSeries([MAIN_5], [MAIN_5, COLLECTION_3]).getChapters('s:Marked-girls')
+    check('series: a numbered sub-line is not pulled into the main line', idsOf(byMain) === '31', idsOf(byMain))
 }
 
 if (!LIVE) {

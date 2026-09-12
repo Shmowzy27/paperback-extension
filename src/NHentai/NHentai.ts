@@ -491,7 +491,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '2.2.0',
+    version: '2.3.0',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -760,7 +760,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         // for (see foldInto).
         const series: {
             key: string; id: string; title: string; volume: number; thumb: string
-            book: boolean; clean: string; creator: string; own: ApiListing; folded: ApiListing[]
+            book: boolean; numbered: boolean; clean: string; creator: string; own: ApiListing; folded: ApiListing[]
         }[] = []
 
         for (const entry of entries) {
@@ -876,20 +876,47 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                 }
             }
 
-            // Same creator, same distinctive ending: one series whose every
-            // volume leads with a title of its own -- "Netoria Marked-girls
-            // Origin" and "pa:Costa Del Sol Marked girls Origin", or "Toxic JK
-            // Netorare Jigo Houkoku" and "NTR Jigo Houkoku 2 After". The ending
-            // alone would be far too loose -- "…Choukyou Nikki" ends any number
-            // of unrelated books -- so the credit has to match as well.
+            // Same creator, related names: one series. Two relations count.
+            //
+            // The same distinctive ending, every volume leading with a title of
+            // its own -- "Netoria Marked-girls Origin" and "pa:Costa Del Sol
+            // Marked girls Origin", or "Toxic JK Netorare Jigo Houkoku" and "NTR
+            // Jigo Houkoku 2 After".
+            //
+            // The same distinctive start, the longer name continuing the shorter
+            // with an arc or a book of its own -- "Tonari no Ayane-san" and
+            // "Tonari no Ayane-san Desaki Battari Hen". The site tags only some
+            // of these as a multi-work series, so the credit decides, not the
+            // tag. A longer name numbered in its own right is a line of its own
+            // -- "Marked-girls Collection Vol. 3" beside "Marked-girls" -- and
+            // stays apart.
+            //
+            // Either relation alone would be far too loose -- "…Choukyou Nikki"
+            // ends any number of unrelated books -- so the credit has to match.
+            const continues = (shortKey: string, longKey: string, longNumbered: boolean): boolean =>
+                shortKey.length < longKey.length && !longNumbered && sharesLead(shortKey, longKey)
+
             if (!folded && creator.length > 0) {
-                const other = series.find((candidate) => candidate.creator === creator && sharesTail(candidate.key, key))
+                const other = series.find((candidate) => candidate.creator === creator
+                    && (sharesTail(candidate.key, key)
+                        || continues(candidate.key, key, numbered)
+                        || continues(key, candidate.key, candidate.numbered)))
                 if (other != undefined) {
-                    // The merged tile has to open as a series: a bare gallery id
-                    // opens as the one book it names.
-                    if (!other.id.startsWith('s:')) {
-                        other.id = marked ? `s:${base}` : `s:${other.title}`
-                        if (marked) other.title = base
+                    if (continues(key, other.key, other.numbered)) {
+                        // This name is the series the tile's own name continues.
+                        // The tile takes it, so that opening finds both: a search
+                        // for the shorter name matches the longer one too.
+                        other.key = key
+                        other.id = `s:${base}`
+                        other.title = base
+                        other.numbered = numbered
+                    } else if (!other.id.startsWith('s:')) {
+                        // The merged tile has to open as a series: a bare gallery
+                        // id opens as the one book it names. When the tile is the
+                        // shorter name, it stays the name.
+                        const takeThis = marked && !continues(other.key, key, numbered)
+                        other.id = takeThis ? `s:${base}` : `s:${other.title}`
+                        if (takeThis) other.title = base
                     }
                     other.book = false
                     if (volume < other.volume) {
@@ -903,9 +930,16 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                     // one. Only series tiles are recorded: a plain gallery shown
                     // earlier cannot be turned into its series after the fact,
                     // so in that order the series tile still has to appear.
+                    //
+                    // Either relation counts, though only one way round for a
+                    // continuing name: this one continuing an earlier series.
+                    // An earlier tile whose name continues this one is already
+                    // on screen under the longer name, and cannot be renamed.
                     const prefix = `a:${creator}|`
                     for (const emitted of seen) {
-                        if (emitted.startsWith(prefix) && sharesTail(emitted.slice(prefix.length), key)) {
+                        if (!emitted.startsWith(prefix)) continue
+                        const earlier = emitted.slice(prefix.length)
+                        if (sharesTail(earlier, key) || continues(earlier, key, numbered)) {
                             this.foldInto(this.remembered<string>(`k:${emitted}`), [entry])
                             folded = true
                             break
@@ -917,7 +951,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
 
             series.push({
                 key: key, id: id, title: title, volume: volume, thumb: thumb,
-                book: book, clean: clean, creator: creator, own: entry, folded: []
+                book: book, numbered: numbered, clean: clean, creator: creator, own: entry, folded: []
             })
         }
 
@@ -1018,9 +1052,15 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                 const split = splitTitle(raw, isMultiWork(entry.tag_ids))
                 const key = seriesKey(split.base)
 
+                // A longer name continuing `base` belongs unless it is numbered in
+                // its own right, a line of its own. A shorter name belongs only
+                // when `base` is one book's long name that continues it -- and,
+                // unnumbered, only from the artist's own works: "Tonari no
+                // Ayane-san Desaki Battari Hen" reaching back to "Tonari no
+                // Ayane-san", the series its arc belongs to.
                 let belongs = key === wanted
                 if (!belongs && sharesLead(key, wanted)) {
-                    belongs = key.length > wanted.length ? !split.numbered : (longName && split.numbered)
+                    belongs = key.length > wanted.length ? !split.numbered : (longName && (split.numbered || sameArtist))
                 }
                 if (!belongs && sameArtist) belongs = sharesTail(key, wanted)
                 if (!belongs) continue
