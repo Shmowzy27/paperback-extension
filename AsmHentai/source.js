@@ -15108,6 +15108,22 @@ var _Sources = (() => {
     }
     return distinctive(run);
   };
+  var subtitlesOf = (clean) => clean.split(/\s+[-–—]\s+|:\s+|~|["“”「」『』]/).slice(1).map((part) => part.trim()).filter((part) => part.length > 0);
+  var sharesOpening = (a, b) => {
+    const x = keyWords(a);
+    const y = keyWords(b);
+    const run = [];
+    for (let index2 = 0; index2 < Math.min(x.length, y.length); index2++) {
+      if (x[index2] !== y[index2]) break;
+      run.push(x[index2]);
+    }
+    return distinctive(run);
+  };
+  var sharesSubtitle = (rawA, rawB) => {
+    const a = subtitlesOf(cleanTitle(rawA) || rawA);
+    const b = subtitlesOf(cleanTitle(rawB) || rawB);
+    return a.some((x) => b.some((y) => sharesOpening(x, y)));
+  };
   var bookRoot = (clean) => {
     let cut = clean.length;
     for (const separator of SUBTITLE_SEPARATORS) {
@@ -15162,6 +15178,7 @@ var _Sources = (() => {
         seen.add(record);
         memo.remember(`k:${record}`, tileRef, FOLD_TTL);
         memo.remember(`q:${record}`, split.numbered, FOLD_TTL);
+        memo.remember(`u:${record}`, { raw: item.raw, multiWork: item.multiWork }, FOLD_TTL);
       }
     };
     const adopt = (tileKey, ref) => {
@@ -15257,7 +15274,7 @@ var _Sources = (() => {
         }
       }
       if (!folded && creators.length > 0) {
-        const other = series.find((candidate) => sharesCredit(candidate.creators, creators) && (sharesTail(candidate.key, key) || continues(candidate.key, key, numbered) || continues(key, candidate.key, candidate.numbered)));
+        const other = series.find((candidate) => sharesCredit(candidate.creators, creators) && (sharesTail(candidate.key, key) || continues(candidate.key, key, numbered) || continues(key, candidate.key, candidate.numbered) || item.multiWork && candidate.own.multiWork && sharesSubtitle(candidate.own.raw, item.raw)));
         if (other != void 0) {
           if (continues(key, other.key, other.numbered)) {
             other.key = key;
@@ -15286,7 +15303,8 @@ var _Sources = (() => {
             if (bar < 0 || !creators.includes(emitted.slice(2, bar))) continue;
             const earlier = emitted.slice(bar + 1);
             const earlierNumbered = memo.remembered(`q:${emitted}`) ?? true;
-            if (!(sharesTail(earlier, key) || continues(earlier, key, numbered) || continues(key, earlier, earlierNumbered))) continue;
+            const earlierTitle = memo.remembered(`u:${emitted}`);
+            if (!(sharesTail(earlier, key) || continues(earlier, key, numbered) || continues(key, earlier, earlierNumbered) || item.multiWork && earlierTitle != void 0 && earlierTitle.multiWork && sharesSubtitle(earlierTitle.raw, item.raw))) continue;
             const tileRef = memo.remembered(`k:${emitted}`);
             if (tileRef != void 0 && tileRef.startsWith("#")) {
               if (marked) adopt(seriesKey(base), tileRef);
@@ -15323,7 +15341,7 @@ var _Sources = (() => {
           const b = series[j];
           if (a === b) continue;
           const credited = sharesCredit(a.creators, b.creators);
-          const byCredit = credited && (continues(a.key, b.key, b.numbered) || i < j && sharesTail(a.key, b.key));
+          const byCredit = credited && (continues(a.key, b.key, b.numbered) || i < j && sharesTail(a.key, b.key) || i < j && a.own.multiWork && b.own.multiWork && sharesSubtitle(a.own.raw, b.own.raw));
           const byName = a.key.length < b.key.length && b.book && !a.book && sharesLead(a.key, b.key);
           if (!byCredit && !byName) continue;
           absorb(a, b);
@@ -15346,6 +15364,7 @@ var _Sources = (() => {
         seen.add(record);
         memo.remember(`k:${record}`, tileRef, FOLD_TTL);
         memo.remember(`q:${record}`, entry.numbered, FOLD_TTL);
+        memo.remember(`u:${record}`, { raw: entry.own.raw, multiWork: entry.own.multiWork }, FOLD_TTL);
       }
       for (const member of isSeries ? [entry.own, ...entry.folded] : [entry.own]) {
         recordMember(member, tileRef);
@@ -15361,7 +15380,7 @@ var _Sources = (() => {
       return seriesKey(clean) === wanted && !splitTitle(candidate.raw, candidate.multiWork).numbered;
     });
   };
-  var volumeOf = (candidate, base, longName, sameArtist, trusted = false) => {
+  var volumeOf = (candidate, base, longName, sameArtist, trusted = false, relatives = []) => {
     const wanted = seriesKey(base);
     const split = splitTitle(candidate.raw, candidate.multiWork);
     const key = seriesKey(split.base);
@@ -15370,6 +15389,9 @@ var _Sources = (() => {
       belongs = key.length > wanted.length ? !split.numbered : longName && (split.numbered || sameArtist);
     }
     if (!belongs && sameArtist) belongs = sharesTail(key, wanted);
+    if (!belongs && sameArtist && candidate.multiWork) {
+      belongs = relatives.some((relative) => relative.multiWork && sharesSubtitle(relative.raw, candidate.raw));
+    }
     const title = cleanTitle(candidate.raw) || candidate.raw;
     return {
       belongs,
@@ -15494,7 +15516,7 @@ var _Sources = (() => {
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
   var AsmHentaiInfo = {
-    version: "1.6.1",
+    version: "1.6.2",
     name: "AsmHentai (English)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15801,7 +15823,7 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
       const consider = (rows, sameArtist, trusted = false) => {
         for (const row of rows) {
           if (found.has(row.galleryId)) continue;
-          const verdict = volumeOf(row, base, longName, sameArtist, trusted);
+          const verdict = volumeOf(row, base, longName, sameArtist, trusted, members);
           if (!verdict.belongs || books.has(verdict.book)) continue;
           books.add(verdict.book);
           found.set(row.galleryId, { id: row.galleryId, title: verdict.title, volume: verdict.volume, numbered: verdict.numbered });

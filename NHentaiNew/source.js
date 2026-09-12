@@ -721,27 +721,14 @@ var _Sources = (() => {
     }
   });
 
-  // src/NHentai/NHentai.ts
-  var NHentai_exports = {};
-  __export(NHentai_exports, {
-    NH_BANNED: () => NH_BANNED,
-    NH_DOMAIN: () => NH_DOMAIN,
-    NHentai: () => NHentai,
-    NHentaiInfo: () => NHentaiInfo,
-    baseFromSeriesId: () => baseFromSeriesId,
-    cleanTitle: () => cleanTitle,
-    creatorOf: () => creatorOf,
-    creatorsOf: () => creatorsOf,
-    isSeriesId: () => isSeriesId,
-    searchTermFor: () => searchTermFor,
-    seriesIdFor: () => seriesIdFor,
-    seriesKey: () => seriesKey,
-    seriesQuery: () => seriesQuery,
-    sharesLead: () => sharesLead,
-    sharesSubtitle: () => sharesSubtitle,
-    sharesTail: () => sharesTail,
-    splitTitle: () => splitTitle
+  // src/NHentaiNew/NHentaiNew.ts
+  var NHentaiNew_exports = {};
+  __export(NHentaiNew_exports, {
+    NHentaiNew: () => NHentaiNew,
+    NHentaiNewInfo: () => NHentaiNewInfo
   });
+
+  // src/NHentai/NHentai.ts
   var import_types = __toESM(require_lib());
 
   // src/NHentai/SeriesMerge.ts
@@ -985,10 +972,6 @@ var _Sources = (() => {
     }
     const root = seriesKey(clean.slice(0, cut));
     return distinctive(root.split(" ").filter((word) => word.length > 0)) ? root : "";
-  };
-  var creatorOf = (raw) => {
-    const match = /^\s*(?:\([^)]*\)\s*)*\[([^\]]+)\]/.exec(raw);
-    return match ? seriesKey(match[1]) : "";
   };
   var ANONYMOUS_CREDITS = /* @__PURE__ */ new Set(["various", "anthology", "unknown", "english", "digital", "decensored", "uncensored"]);
   var creatorsOf = (raw) => {
@@ -1362,7 +1345,6 @@ var _Sources = (() => {
     { id: "popular", label: "All-Time Popular (English)", sort: "popular" }
   ];
   var SERIES_PREFIX2 = "s:";
-  var seriesIdFor = (title) => `${SERIES_PREFIX2}${splitTitle(title).base}`;
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX2);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX2.length);
   var searchTermFor = (tagId, exclude) => {
@@ -1986,6 +1968,20 @@ Please go to the homepage of <${this.displayName}> and press the cloud icon.`);
       return this.pagedSearch("language:english", sort, page, seen);
     }
   };
-  return __toCommonJS(NHentai_exports);
+
+  // src/NHentaiNew/NHentaiNew.ts
+  var NHentaiNewInfo = {
+    ...NHentaiInfo,
+    version: "1.0.0",
+    name: "nhentai (new)",
+    description: "nhentai with every rule of the filtered source -- English only, the standing exclusions, no parodies, and each series merged into one entry -- under a library of its own."
+  };
+  var NHentaiNew = class extends NHentai {
+    constructor() {
+      super(...arguments);
+      this.displayName = NHentaiNewInfo.name;
+    }
+  };
+  return __toCommonJS(NHentaiNew_exports);
 })();
 this.Sources = _Sources; if (typeof exports === 'object' && typeof module !== 'undefined') {module.exports.Sources = this.Sources;}

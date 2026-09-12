@@ -14892,7 +14892,24 @@ var _Sources = (() => {
   var H2R_CDN = "https://hentaicdn.com/hentai";
   var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i;
   var BANNED_CATEGORY_SLUGS = /* @__PURE__ */ new Set(["Yaoi"]);
-  var BANNED_TAG_IDS = /* @__PURE__ */ new Set(["27"]);
+  var BANNED_TAG_IDS = /* @__PURE__ */ new Set([
+    "24",
+    // Tentacles
+    "27",
+    // Boy Love (Yaoi)
+    "311",
+    // Group Intercourse
+    "343",
+    // Crossdressing
+    "429",
+    // Gang Rape
+    "462",
+    // Gangbang
+    "1409",
+    // Monster Girls
+    "1688"
+    // Threesome (MMF)
+  ]);
   var NOT_SERIES = /* @__PURE__ */ new Set([
     "latest",
     "trending",
@@ -14922,7 +14939,7 @@ var _Sources = (() => {
     { id: "trending", label: "Trending", path: (page) => `/hentai-list/all/any/all/trending/${page}/` }
   ];
   var Hentai2ReadInfo = {
-    version: "1.4.2",
+    version: "1.5.0",
     name: "Hentai2Read (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15015,7 +15032,7 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
     parseTiles(html3, seen, filters2) {
       const $2 = load(html3);
       const tiles = [];
-      const grid = $2("div.book-grid-item-container[data-tags]").toArray();
+      const grid = $2("div.book-grid-item-container[data-tags], li.js-lts-grp[data-tags]").toArray();
       for (const element of grid) {
         const card = $2(element);
         const ids = (card.attr("data-tags") ?? "").split("-");
@@ -15024,12 +15041,17 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
           if (filters2.exclude.some((id) => ids.includes(id))) continue;
           if (!filters2.include.every((id) => ids.includes(id))) continue;
         }
-        const anchor = card.find('a[href^="https://hentai2read.com/"]').first();
+        const anchor = card.find('a.mangaPopover[href^="https://hentai2read.com/"]').first().length > 0 ? card.find('a.mangaPopover[href^="https://hentai2read.com/"]').first() : card.find('a[href^="https://hentai2read.com/"]').first();
         const slug = /^https:\/\/hentai2read\.com\/([a-z0-9_]+)\/$/.exec(anchor.attr("href") ?? "")?.[1];
         if (slug == void 0 || NOT_SERIES.has(slug) || seen.has(slug)) continue;
-        const title = anchor.text().replace(/\s+/g, " ").replace(/\[[^\]]*\]\s*$/, "").trim();
-        if (title.length === 0 || BANNED_LABELS.test(anchor.text())) continue;
-        const image = (card.find("img").first().attr("src") ?? "").trim();
+        const rawTitle = anchor.attr("data-title") ?? anchor.text();
+        const title = rawTitle.replace(/\s+/g, " ").replace(/\[[^\]]*\]\s*$/, "").trim();
+        if (title.length === 0 || BANNED_LABELS.test(rawTitle)) continue;
+        let image = (card.find("img").first().attr("src") ?? "").trim();
+        const mid = card.attr("data-mid");
+        if ((image.length === 0 || image.includes("/img/other/")) && mid != void 0) {
+          image = `https://img1.hentaicdn.com/hentai/cover/_S${mid}.jpg`;
+        }
         seen.add(slug);
         tiles.push(App.createPartialSourceManga({
           mangaId: slug,
@@ -15105,15 +15127,16 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
       for (const element of $2('ul.list-simple-mini a.tagButton[href*="/hentai-list/category/"]').toArray()) {
         const slug = decodeURIComponent(/\/hentai-list\/category\/([^/"]+)/.exec($2(element).attr("href") ?? "")?.[1] ?? "");
         const label = $2(element).text().trim();
-        if (BANNED_CATEGORY_SLUGS.has(slug) || BANNED_LABELS.test(label)) return true;
+        if (BANNED_CATEGORY_SLUGS.has(slug) || BANNED_LABELS.test(label)) return label.length > 0 ? label : slug;
       }
-      return false;
+      return void 0;
     }
     async getMangaDetails(mangaId) {
       const html3 = await this.fetchHtml(this.getMangaShareUrl(mangaId));
       const $2 = load(html3);
-      if (this.bannedFrom($2)) {
-        throw new Error("This title carries content excluded by your settings (BL/yaoi) and will not be shown.");
+      const banned = this.bannedFrom($2);
+      if (banned != void 0) {
+        throw new Error(`This title is filed under "${banned}", which is excluded by your settings, and will not be shown.`);
       }
       const title = ($2('meta[property="og:title"]').attr("content") ?? $2("title").text()).replace(/\s*(?:- Page \d+.*|at Hentai2Read.*|\| Hentai2Read.*)$/i, "").replace(/\s*\[[^\]]*\]\s*$/, "").trim() || mangaId;
       const image = ($2('meta[property="og:image"]').attr("content") ?? $2('img[src*="/cover/"]').first().attr("src") ?? "").trim();
@@ -15144,8 +15167,9 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
     async getChapters(mangaId) {
       const html3 = await this.fetchHtml(this.getMangaShareUrl(mangaId));
       const $2 = load(html3);
-      if (this.bannedFrom($2)) {
-        throw new Error("This title carries content excluded by your settings (BL/yaoi) and will not be shown.");
+      const banned = this.bannedFrom($2);
+      if (banned != void 0) {
+        throw new Error(`This title is filed under "${banned}", which is excluded by your settings, and will not be shown.`);
       }
       const rows = [];
       const seen = /* @__PURE__ */ new Set();
