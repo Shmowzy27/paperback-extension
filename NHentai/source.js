@@ -1059,7 +1059,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "2.3.0",
+    version: "2.3.1",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -1162,8 +1162,8 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
       return entry.value;
     }
     remember(key, value, ttl = 12e4) {
-      if (this.memo.size > 400) {
-        const oldest = [...this.memo.entries()].sort((a, b) => a[1].at - b[1].at).slice(0, 200);
+      if (this.memo.size > 3e3) {
+        const oldest = [...this.memo.entries()].sort((a, b) => a[1].at - b[1].at).slice(0, 1e3);
         for (const [key2] of oldest) this.memo.delete(key2);
       }
       this.memo.set(key, { at: Date.now(), value, ttl });
@@ -1306,7 +1306,9 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
           continue;
         }
         if (seen.has(`t:${key}`) || seen.has(`n:${key}`)) {
-          this.foldInto(this.remembered(`k:t:${key}`) ?? this.remembered(`k:n:${key}`), [entry]);
+          const tileRef = this.remembered(`k:t:${key}`) ?? this.remembered(`k:n:${key}`);
+          this.foldInto(tileRef, [entry]);
+          this.recordMember(seen, entry, tileRef);
           continue;
         }
         const root = book ? bookRoot(clean) : "";
@@ -1345,7 +1347,13 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
             if (!sharesLead(other, key)) continue;
             const otherIsBook = emitted.startsWith("n:");
             if (key.length > other.length && book && !otherIsBook || key.length < other.length && !book && otherIsBook) {
-              this.foldInto(this.remembered(`k:${emitted}`), [entry]);
+              const tileRef = this.remembered(`k:${emitted}`);
+              if (tileRef != void 0 && tileRef.startsWith("#")) {
+                if (marked) this.adopt(seriesKey(base), tileRef);
+                break;
+              }
+              this.foldInto(tileRef, [entry]);
+              this.recordMember(seen, entry, tileRef);
               folded = true;
               break;
             }
@@ -1377,11 +1385,17 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
             for (const emitted of seen) {
               if (!emitted.startsWith(prefix)) continue;
               const earlier = emitted.slice(prefix.length);
-              if (sharesTail(earlier, key) || continues(earlier, key, numbered)) {
-                this.foldInto(this.remembered(`k:${emitted}`), [entry]);
+              const earlierNumbered = this.remembered(`q:${emitted}`) ?? true;
+              if (!(sharesTail(earlier, key) || continues(earlier, key, numbered) || continues(key, earlier, earlierNumbered))) continue;
+              const tileRef = this.remembered(`k:${emitted}`);
+              if (tileRef != void 0 && tileRef.startsWith("#")) {
+                if (marked) this.adopt(seriesKey(base), tileRef);
+              } else {
+                this.foldInto(tileRef, [entry]);
+                this.recordMember(seen, entry, tileRef);
                 folded = true;
-                break;
               }
+              break;
             }
           }
         }
@@ -1405,15 +1419,17 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         const key = `${entry.book ? "n" : "t"}:${entry.key}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        if (entry.id.startsWith("s:")) {
-          const tileKey = seriesKey(entry.id.slice(2));
-          this.foldInto(tileKey, [entry.own, ...entry.folded]);
-          this.remember(`k:${key}`, tileKey, 18e5);
-          if (entry.creator.length > 0) {
-            const record = `a:${entry.creator}|${entry.key}`;
-            seen.add(record);
-            this.remember(`k:${record}`, tileKey, 18e5);
-          }
+        const tileRef = entry.id.startsWith("s:") ? seriesKey(entry.id.slice(2)) : `#${entry.id}`;
+        if (entry.id.startsWith("s:")) this.foldInto(tileRef, [entry.own, ...entry.folded]);
+        this.remember(`k:${key}`, tileRef, 18e5);
+        if (entry.creator.length > 0) {
+          const record = `a:${entry.creator}|${entry.key}`;
+          seen.add(record);
+          this.remember(`k:${record}`, tileRef, 18e5);
+          this.remember(`q:${record}`, entry.numbered, 18e5);
+        }
+        for (const member of entry.id.startsWith("s:") ? [entry.own, ...entry.folded] : [entry.own]) {
+          this.recordMember(seen, member, tileRef);
         }
         tiles.push(App.createPartialSourceManga({
           mangaId: entry.id,
@@ -1429,12 +1445,36 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
      * same as the listing entries themselves.
      */
     foldInto(tileKey, entries) {
-      if (tileKey == void 0 || entries.length === 0) return;
+      if (tileKey == void 0 || tileKey.startsWith("#") || entries.length === 0) return;
       const list = this.remembered(`f:${tileKey}`) ?? [];
       for (const entry of entries) {
         if (!list.some((known) => known.id === entry.id)) list.push(entry);
       }
       this.remember(`f:${tileKey}`, list, 18e5);
+    }
+    /**
+     * Hands a single book already on screen -- `#id` -- to a series shown
+     * after it, so the series opens with the book it follows.
+     */
+    adopt(tileKey, ref) {
+      const book = this.remembered(`l:${ref.slice(1)}`);
+      if (book != void 0) this.foldInto(tileKey, [book]);
+    }
+    /**
+     * Records a gallery as a member of the tile `tileRef`, under its creator
+     * and its own series key, so that a later page's fold can find the tile
+     * through any gallery it holds.
+     */
+    recordMember(seen, entry, tileRef) {
+      if (tileRef == void 0) return;
+      const raw = (entry.english_title ?? entry.japanese_title ?? "").trim();
+      const creator = creatorOf(raw);
+      if (creator.length === 0) return;
+      const split = splitTitle(raw, isMultiWork(entry.tag_ids));
+      const record = `a:${creator}|${seriesKey(split.base)}`;
+      seen.add(record);
+      this.remember(`k:${record}`, tileRef, 18e5);
+      this.remember(`q:${record}`, split.numbered, 18e5);
     }
     /**
      * Every gallery belonging to `base`, ordered by volume.
@@ -1468,7 +1508,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         return seriesKey(cleanTitle(raw) || raw) === wanted && !splitTitle(raw, isMultiWork(entry.tag_ids)).numbered;
       });
       let refused = 0;
-      const consider = (entries, sameArtist) => {
+      const consider = (entries, sameArtist, trusted = false) => {
         for (const entry of entries) {
           if (found.has(entry.id)) continue;
           const raw = (entry.english_title ?? entry.japanese_title ?? "").trim();
@@ -1479,7 +1519,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
             belongs = key.length > wanted.length ? !split.numbered : longName && (split.numbered || sameArtist);
           }
           if (!belongs && sameArtist) belongs = sharesTail(key, wanted);
-          if (!belongs) continue;
+          if (!belongs && !trusted) continue;
           if (!this.admitted(entry.tag_ids, parodies)) {
             refused++;
             continue;
@@ -1492,7 +1532,7 @@ Please go to the homepage of <${NHentaiInfo.name}> and press the cloud icon.`);
         }
       };
       consider(byName, false);
-      consider(this.remembered(`f:${wanted}`) ?? [], true);
+      consider(this.remembered(`f:${wanted}`) ?? [], true, true);
       if (found.size > 0) {
         try {
           const first = Array.from(found.values()).sort((a, b) => a.volume - b.volume)[0];
