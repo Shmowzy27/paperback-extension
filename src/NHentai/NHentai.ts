@@ -22,6 +22,9 @@ import {
     TagSection
 } from '@paperback/types'
 
+import { bannedTagName } from './ContentRules'
+import { PARODY_IDS, RULE_TAG_IDS } from './RuleIds'
+
 export const NH_DOMAIN = 'https://nhentai.net'
 const NH_API = `${NH_DOMAIN}/api/v2`
 
@@ -86,7 +89,23 @@ const ORIGINAL_PARODY_ID = 90671
 /** Pages of the parody catalog warmed while browsing. See parodyIds. */
 const PARODY_CATALOG_PAGES = 12
 
-const BANNED_IDS = new Set(NH_BANNED.map((tag) => tag.id))
+/**
+ * Every tag id the rules exclude. The named sixteen above, and -- since a
+ * listing entry carries only ids -- every other tag in the site's catalog whose
+ * name the rules exclude (bannedTagName in ContentRules.ts), read off the whole
+ * catalog into RuleIds.ts. Before, a tag named only in the search negation
+ * ("gangbang", "furry") or in no list at all ("fox girl", "orc") had no id
+ * here, so nothing checked it once a listing came back.
+ */
+const BANNED_IDS = new Set([...NH_BANNED.map((tag) => tag.id), ...RULE_TAG_IDS])
+
+/**
+ * Every parody's id bar "original", carried in the bundle. The catalog used to
+ * be warmed a page per listing on the device; at ten requests a minute the
+ * first screen knew the top hundred parodies at best -- a Detective Conan
+ * parody sat in the listing -- and none at all when that request was refused.
+ */
+const PARODY_ID_SET = new Set(PARODY_IDS)
 
 /**
  * Appended to every search the source makes. The API's own negation syntax, so
@@ -138,8 +157,9 @@ const GROUP_RULE = { group: [8010], oneMale: [35763, 15348, 15785], oneFemale: [
  */
 const TAG_TYPES: { type: string; label: string }[] = [
     { type: 'tag', label: 'Tags' },
-    { type: 'artist', label: 'Artists' },
-    { type: 'parody', label: 'Parodies' }
+    { type: 'artist', label: 'Artists' }
+    // No parodies: every parody is excluded, and a filter that cannot return
+    // anything is worse than none.
 ]
 
 const SECTIONS: { id: string; label: string; sort: string }[] = [
@@ -175,7 +195,7 @@ import {
 } from './SeriesMerge'
 export { cleanTitle, creatorOf, creatorsOf, seriesKey, sharesSubtitle, sharesLead, sharesTail, splitTitle } from './SeriesMerge'
 import { GROUP_REFUSAL_MESSAGE, groupRefusedByIds } from './ContentRules'
-export { groupRefusal, groupRefusedByIds } from './ContentRules'
+export { bannedTagName, groupRefusal, groupRefusedByIds, STANDING_LABELS, TAG_ONLY_LABELS } from './ContentRules'
 
 const SERIES_PREFIX = 's:'
 export const seriesIdFor = (title: string): string => `${SERIES_PREFIX}${splitTitle(title).base}`
@@ -259,7 +279,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '2.4.2',
+    version: '2.4.3',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -461,6 +481,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         const ids = tagIds ?? []
         if (!ids.includes(ENGLISH_ID)) return false
         if (ids.some((id) => BANNED_IDS.has(id))) return false
+        if (ids.some((id) => PARODY_ID_SET.has(id))) return false
         if (groupRefusedByIds(ids, GROUP_RULE)) return false
 
         // A listing entry mixes every tag type into one id list, so a parody
@@ -775,7 +796,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         if (!tags.some((tag) => tag.id === ENGLISH_ID)) {
             throw new Error('This gallery is not in English and will not be shown.')
         }
-        if (tags.some((tag) => BANNED_IDS.has(tag.id))) {
+        if (tags.some((tag) => BANNED_IDS.has(tag.id) || (tag.type === 'tag' && bannedTagName(tag.name)))) {
             throw new Error('This gallery carries content excluded by your settings and will not be shown.')
         }
         if (groupRefusedByIds(tags.map((tag) => tag.id), GROUP_RULE)) {
@@ -836,7 +857,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             if (!(gallery.tags ?? []).some((tag) => tag.id === ENGLISH_ID)) {
                 throw new Error('This gallery is not in English and will not be shown.')
             }
-            if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
+            if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id) || (tag.type === 'tag' && bannedTagName(tag.name)))) {
                 throw new Error('This gallery carries content excluded by your settings and will not be shown.')
             }
             if (groupRefusedByIds((gallery.tags ?? []).map((tag) => tag.id), GROUP_RULE)) {
@@ -980,6 +1001,9 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                     for (const tag of data.result ?? []) {
                         const name = (tag.name ?? '').trim()
                         if (name.length === 0 || seen.has(name) || bannedNames.has(name.toLowerCase())) continue
+                        // The whole rule, not only the sixteen named tags:
+                        // "gangbang" and "furry" were on offer before.
+                        if (entry.type === 'tag' && bannedTagName(name)) continue
 
                         seen.add(name)
                         tags.push({ id: `${entry.type}:${name}`, label: name })
@@ -1003,17 +1027,8 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             }
         }
 
-        // Shown so the standing exclusions are visible in the filter UI;
-        // selecting one cannot bring the content back.
-        sections.push(App.createTagSection({
-            id: 'excluded',
-            label: 'Always Excluded',
-            tags: [
-                ...NH_BANNED.map((tag) => App.createTag({ id: `x-${tag.id}`, label: `No ${tag.name}` })),
-                App.createTag({ id: 'x-group-rule', label: 'No group unless one man (sole male, ffm, harem)' })
-            ]
-        }))
-
+        // No "Always Excluded" list: its "No yaoi", "No males only" entries
+        // read as excluded tags on offer. The rules apply whatever is chosen.
         return sections
     }
 

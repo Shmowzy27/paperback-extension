@@ -71,6 +71,25 @@ const check = (label, ok, detail) => {
 
 const sources = ['AsmHentai', 'NHentai', 'HentaiHere', 'Hentai2Read', 'Hentai3z']
 
+// Tag names only -- never titles -- in ContentRules.ts's TAG_ONLY_LABELS:
+// every animal and creature, and male-to-male content under other names.
+// Tested against every pattern a source holds tags to, for each source that
+// applies it.
+const TAG_ONLY_MUST_MATCH = [
+    'fox girl', 'cow girl', 'cow', 'cowman', 'shark girl', 'mouse girl', 'goat', 'donkey', 'elephant',
+    'dragon', 'lamia', 'harpy', 'mermaid', 'orc', 'goblin', 'kappa', 'bat girl', 'bee girl', 'dinosaur',
+    'dolphin', 'eel', 'gorilla', 'kangaroo', 'lion', 'panther', 'pegasus', 'rabbit', 'sheep girl', 'slug',
+    'maggot', 'reptile', 'squid girl', 'lizard girl', 'raccoon girl', 'hyena girl', 'giraffe girl',
+    'panda girl', 'otter girl', 'snail girl', 'deer girl', 'monkey', 'parasite', 'catboy', 'bunny boy',
+    'bisexual', 'male pregnancy', 'cuntboy', 'sole pussyboy', 'josou seme'
+]
+const TAG_ONLY_MUST_NOT_MATCH = [
+    'cowgirl', 'bunny girl', 'catgirl', 'cat ears', 'kemonomimi', 'animal ears', 'fishnets', 'ponytail',
+    'gijinka', 'human pet', 'petplay', 'ponygirl', 'rape', 'pirate', 'elf', 'glasses', 'big breasts',
+    'sole female', 'group', 'harem', 'old lady', 'grandmother'
+]
+const TAG_ONLY_SOURCES = ['NHentai', 'Hentai3z', 'AsmHentai', 'HentaiHere', 'Hentai2Read']
+
 for (const name of sources) {
     const bundle = path.join(__dirname, '..', 'bundles', name, 'source.js')
     if (!fs.existsSync(bundle)) continue
@@ -123,6 +142,28 @@ for (const name of sources) {
 
     check(`${name}: catches everything it must`, missed.length === 0, missed.join(', ') || `${MUST_MATCH.length} terms`)
     check(`${name}: catches nothing it must not`, wrong.length === 0, wrong.join(', ') || `${MUST_NOT_MATCH.length} safe words`)
+}
+
+// ---- tag-only exclusions (src/NHentai/ContentRules.ts) ----
+for (const name of TAG_ONLY_SOURCES) {
+    const bundle = path.join(__dirname, '..', 'bundles', name, 'source.js')
+    if (!fs.existsSync(bundle)) continue
+    const code = fs.readFileSync(bundle, 'utf8')
+
+    // Every pattern the source holds a tag's name to, as it ships.
+    const literal = (constName) => {
+        const found = new RegExp(String.raw`(?<![A-Z_])` + constName + String.raw`\s*=\s*(\/(?:[^/\\\n]|\\.)+\/[a-z]*)`).exec(code)
+        return found ? eval(found[1]) : undefined
+    }
+    const patterns = ['BANNED_LABELS', 'STANDING_LABELS', 'TAG_ONLY_LABELS', 'SITE_BANNED_LABELS'].map(literal).filter(Boolean)
+    const caught = (word) => patterns.some((pattern) => pattern.test(word))
+
+    const missed = TAG_ONLY_MUST_MATCH.filter((word) => !caught(word))
+    const wrong = TAG_ONLY_MUST_NOT_MATCH.filter(caught)
+    check(`${name}: every animal, creature and male-to-male tag is caught`, missed.length === 0,
+        missed.join(', ') || `${TAG_ONLY_MUST_MATCH.length} terms, ${patterns.length} patterns`)
+    check(`${name}: costumes, positions, people and older women are left alone`, wrong.length === 0,
+        wrong.join(', ') || `${TAG_ONLY_MUST_NOT_MATCH.length} safe words`)
 }
 
 // ---- the group rule (src/NHentai/ContentRules.ts) ----

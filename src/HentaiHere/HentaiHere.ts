@@ -23,7 +23,7 @@ import {
 } from '@paperback/types'
 
 import * as cheerio from 'cheerio'
-import { GROUP_REFUSAL_MESSAGE, groupRefusal } from '../NHentai/ContentRules'
+import { GROUP_REFUSAL_MESSAGE, groupRefusal, TAG_ONLY_LABELS } from '../NHentai/ContentRules'
 import { CheerioAPI } from 'cheerio'
 
 export const HH_DOMAIN = 'https://hentaihere.com'
@@ -73,7 +73,7 @@ interface ListingMetadata {
  * engine's own minus operator instead, and the details gate backstops both.
  */
 export const HentaiHereInfo: SourceInfo = {
-    version: '1.4.3',
+    version: '1.4.4',
     name: 'HentaiHere (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -229,7 +229,7 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
             const label = anchor.text().trim()
             if (tagId == undefined || label.length === 0 || seen.has(tagId)) continue
 
-            if (BANNED_TAG_IDS.some((id) => tagId === `T${id}`) || BANNED_LABELS.test(label)) banned = banned ?? label
+            if (BANNED_TAG_IDS.some((id) => tagId === `T${id}`) || BANNED_LABELS.test(label) || TAG_ONLY_LABELS.test(label)) banned = banned ?? label
             labels.push(label)
 
             seen.add(tagId)
@@ -272,7 +272,7 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
             const labels = $gate('a[href*="/search/T"]').toArray().map((element) => $gate(element).text().trim())
             const ids = $gate('a[href*="/search/T"]').toArray().map((element) => /\/search\/(T\d+)/.exec($gate(element).attr('href') ?? '')?.[1] ?? '')
             if (ids.some((tagId) => BANNED_TAG_IDS.some((id) => tagId === `T${id}`))
-                || labels.some((label) => BANNED_LABELS.test(label)) || groupRefusal(labels) != undefined) {
+                || labels.some((label) => BANNED_LABELS.test(label) || TAG_ONLY_LABELS.test(label)) || groupRefusal(labels) != undefined) {
                 throw new Error('This title carries content excluded by your settings and will not be shown.')
             }
         }
@@ -417,7 +417,7 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
                     const tagId = /\/search\/(T\d+)/.exec(anchor.attr('href') ?? '')?.[1]
                     const name = anchor.text().trim()
                     if (tagId == undefined || name.length === 0 || seen.has(tagId)) continue
-                    if (BANNED_TAG_IDS.some((id) => tagId === `T${id}`) || BANNED_LABELS.test(name)) continue
+                    if (BANNED_TAG_IDS.some((id) => tagId === `T${id}`) || BANNED_LABELS.test(name) || TAG_ONLY_LABELS.test(name)) continue
 
                     seen.add(tagId)
                     tags.push(App.createTag({ id: tagId, label: name }))

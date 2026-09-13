@@ -49,3 +49,32 @@ export const groupRefusedByIds = <K>(ids: K[], rule: { group: K[]; oneMale: K[];
 /** What a refusal under the group rule says. */
 export const GROUP_REFUSAL_MESSAGE =
     'This gallery has several men with one woman, or a group with no sign of there being one man -- excluded by your settings, so it will not be shown.'
+
+/**
+ * The standing exclusions by name -- the pattern AsmHentai, HentaiHere,
+ * Hentai2Read and Hentai3z each carry as BANNED_LABELS -- for a source that
+ * checks tag names without keeping its own copy (nhentai).
+ */
+export const STANDING_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|reverse[- ]?harem|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i
+
+/**
+ * Excluded tags the standing pattern never named, checked against tag names
+ * only -- never titles, where "The Fox Wife" or "Honey Bee" are just words:
+ *
+ * - every animal and creature a site files as a tag, the "X girl" / "X boy"
+ *   forms included: "all animal-related tags" and "no monsters" -- fox, cow,
+ *   shark, mouse, goat, dragon, lamia, harpy, mermaid, orc, goblin and the
+ *   rest. The standing pattern stopped at a dozen animals, so Hentai3z offered
+ *   "Fox Girl", "Cow Girl" and "Orc" as filters and showed their titles.
+ * - male-to-male content under other names: "bisexual" (a man with men as
+ *   well as women), "male pregnancy", "cuntboy" / "pussyboy", and "josou"
+ *   (crossdressing).
+ *
+ * Left alone on purpose: "cowgirl" (a position), "bunny girl" (a costume),
+ * "catgirl", "cat ears", "kemonomimi" and "animal ears" (a person), "ponygirl"
+ * and "human pet" (role-play).
+ */
+export const TAG_ONLY_LABELS = /\b(?:fox|cow|cowman|bat|bee|shark|mouse|rat|squirrel|racc?oon|monkey|gorilla|ape|panda|lion|lioness|tiger|panther|leopard|hyena|giraffe|elephant|kangaroo|otter|dolphin|whale|eel|squid|lizard|reptile|dinosaur|dragon|chicken|sheep|goat|deer|rabbit|donkey|pegasus|unicorn|slug|snail|maggot|lamia|harpy|mermaid|merman|orc|goblin|kappa|parasite|catboy)\b|\bbunny\s*boy\b|\bbisexual\b|\bmale pregnancy\b|\bcuntboy\b|pussyboy|\bjosou\b/i
+
+/** Whether a tag name is excluded by the standing rules. */
+export const bannedTagName = (name: string): boolean => STANDING_LABELS.test(name) || TAG_ONLY_LABELS.test(name)

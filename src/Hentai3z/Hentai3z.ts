@@ -44,7 +44,7 @@ import {
     seriesKey,
     volumeOf
 } from '../NHentai/SeriesMerge'
-import { GROUP_REFUSAL_MESSAGE, groupRefusal } from '../NHentai/ContentRules'
+import { GROUP_REFUSAL_MESSAGE, groupRefusal, TAG_ONLY_LABELS } from '../NHentai/ContentRules'
 import { PARODY_PHRASES } from './ParodyNames'
 export { cleanTitle, splitTitle } from '../NHentai/SeriesMerge'
 
@@ -60,13 +60,34 @@ export const H3Z_DOMAIN = 'https://hentai3z.cc'
 const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|reverse[- ]?harem|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i
 
 /**
- * Tags this site carries beyond the shared pattern: "Trap", its older name for
- * tomgirl, and the animal-boy tags the shared pattern's words do not reach
- * ("Catboy", "Fox Boy", "Shark Boy" ...). Checked against tags only -- "trap"
- * in a title is as likely "Honey Trap". "Bunny Girl" is a costume, not an
- * animal, and is not here.
+ * Tags this site carries beyond the shared patterns: "Trap", its older name for
+ * tomgirl, and its kin. Every animal, creature and other tag-only exclusion is
+ * TAG_ONLY_LABELS in ContentRules.ts. Checked against tags only -- "trap" in a
+ * title is as likely "Honey Trap".
  */
-const SITE_BANNED_LABELS = /\btrap\b|\bfemboy\b|\botokonoko\b|\bcatboy\b|\b(?:fox|bunny|shark|mouse|squid|racc?oon|monkey|lizard|deer|squirrel|sheep)\s*(?:boy|man)\b/i
+const SITE_BANNED_LABELS = /\btrap\b|\bfemboy\b|\botokonoko\b/i
+
+/**
+ * Site bookkeeping filed as tags, and stray names that landed in the tag
+ * table -- nothing anyone filters by, so kept off the offered list.
+ */
+const META_TAGS = new Set([
+    'already uploaded', 'missing cover', 'out of order', 'sample', 'scanmark', 'extraneous ads',
+    'forbidden content', 'replaced', 'incomplete', 'poor grammar', 'poor translation', 'rough grammar',
+    'rough translation', 'rewrite', 'redraw', 'defaced', 'full censorship', 'mosaic censorship',
+    'replace with short hair', 'property tag', 'ganari ryuu', 'ruko kominato', 'soul calibur'
+])
+
+const UNCENSORED = /\buncensored\b/i
+
+/**
+ * One key for a manhwa's censored and uncensored editions -- "Secret Class
+ * Uncensored", "Stepmother's Friends (Uncensored)", "Concubine (Official
+ * Uncensored)" all key as the censored title does.
+ */
+const twinKey = (title: string): string => seriesKey(title
+    .replace(/\(\s*(?:official\s+)?(?:un)?censored\s*\)/gi, ' ')
+    .replace(/\b(?:official\s+)?(?:un)?censored\b/gi, ' '))
 
 /**
  * Anime and game parodies are excluded, leaving original works. The site has
@@ -251,7 +272,7 @@ const titleRefusal = (title: string): boolean => BANNED_LABELS.test(title) || pa
  * second, measured live, and each is remembered so opening the title is free.
  */
 export const Hentai3zInfo: SourceInfo = {
-    version: '1.0.0',
+    version: '1.0.1',
     name: 'Hentai3z',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -481,7 +502,7 @@ export class Hentai3z implements SearchResultsProviding, MangaProviding, Chapter
     private refusalOf(inspection: Inspection): string | undefined {
         const labels = inspection.genres.map((genre) => genre.name)
 
-        const banned = labels.find((label) => BANNED_LABELS.test(label) || SITE_BANNED_LABELS.test(label))
+        const banned = labels.find((label) => BANNED_LABELS.test(label) || TAG_ONLY_LABELS.test(label) || SITE_BANNED_LABELS.test(label))
         if (banned != undefined) return `This title is filed under "${banned}", which is excluded by your settings, and will not be shown.`
 
         if (groupRefusal(labels) != undefined) return GROUP_REFUSAL_MESSAGE
@@ -548,15 +569,35 @@ export class Hentai3z implements SearchResultsProviding, MangaProviding, Chapter
             run = []
         }
 
-        for (const candidate of candidates) {
+        const shown = (candidate: Candidate): Inspection | undefined => {
             const inspection = candidate.inspection
-            if (candidate.refused || inspection == undefined) continue
-            if (inspection.chapters.length === 0 || !this.matches(inspection, filters)) continue
+            if (candidate.refused || inspection == undefined) return undefined
+            if (inspection.chapters.length === 0 || !this.matches(inspection, filters)) return undefined
+            return inspection
+        }
+
+        // A manhwa published twice, censored and uncensored -- "Secret Class"
+        // and "Secret Class Uncensored" -- is one series, so one tile: the
+        // uncensored edition when both are on the page, and whichever came
+        // first when they are pages apart.
+        const preferred = new Map<string, Inspection>()
+        for (const candidate of candidates) {
+            const inspection = shown(candidate)
+            if (inspection == undefined || !isSerial(inspection)) continue
+            const key = twinKey(inspection.title)
+            const current = preferred.get(key)
+            if (current == undefined || (UNCENSORED.test(inspection.title) && !UNCENSORED.test(current.title))) preferred.set(key, inspection)
+        }
+
+        for (const candidate of candidates) {
+            const inspection = shown(candidate)
+            if (inspection == undefined) continue
 
             if (isSerial(inspection)) {
                 flush()
-                if (serials.has(inspection.slug)) continue
-                serials.add(inspection.slug)
+                const key = twinKey(inspection.title)
+                if (serials.has(key) || preferred.get(key) !== inspection) continue
+                serials.add(key)
                 tiles.push(App.createPartialSourceManga({
                     mangaId: inspection.slug,
                     image: candidate.card.thumb || inspection.cover,
@@ -849,7 +890,10 @@ export class Hentai3z implements SearchResultsProviding, MangaProviding, Chapter
                 const slug = /\/manga-list\/([^/?#"]+)\/?$/.exec($(element).attr('href') ?? '')?.[1]
                 const name = $(element).text().replace(/\s+/g, ' ').trim()
                 if (slug == undefined || name.length === 0 || found.has(slug)) continue
-                if (BANNED_LABELS.test(name) || SITE_BANNED_LABELS.test(name) || PARODY_TAG_SLUGS.has(slug)) continue
+                if (BANNED_LABELS.test(name) || TAG_ONLY_LABELS.test(name) || SITE_BANNED_LABELS.test(name)) continue
+                // Parodies are excluded, so neither the site's parody tags nor
+                // a tag that is itself a series or character is on offer.
+                if (PARODY_TAG_SLUGS.has(slug) || parodyIn(name) != undefined || META_TAGS.has(name.toLowerCase())) continue
                 found.set(slug, name)
             }
         } catch {

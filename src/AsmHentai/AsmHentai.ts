@@ -56,7 +56,76 @@ const BANNED_TAG_IDS = new Set([
     '302', '309', '311', '339', '343', '344', '353', '369', '371', '376',
     '377', '379', '380', '398', '405', '406', '417', '418', '441', '442',
     '445', '454', '460', '493', '534', '548', '560', '563', '581', '660',
-    '1153', '1225', '1296', '1469', '1580', '3513', '4021', '5478', '7381', '8220', '8224'
+    '1153', '1225', '1296', '1469', '1580', '3513', '4021', '5478', '7381', '8220', '8224',
+    // The full rule's animal, creature and male-to-male tags (TAG_ONLY_LABELS
+    // in ../NHentai/ContentRules.ts), resolved the same way: carried by five
+    // or more cards of the tag's own listing, and by at most one card in a
+    // 78-card English sample.
+    '8210', // animal on furry
+    '326', // bisexual
+    '392', // bunny boy
+    '2791', // bear boy
+    '356', // bee girl
+    '7783', // bird boy
+    '4632', // bat girl
+    '289', // catboy
+    '448', // cuntboy
+    '283', // cowman
+    '650', // cow
+    '508', // dragon
+    '3711', // deer girl
+    '2600', // deer boy
+    '599', // dinosaur
+    '727', // dolphin
+    '487', // eel
+    '7844', // elephant
+    '171', // fox girl
+    '172', // fox boy
+    '1695', // fox
+    '416', // goblin
+    '399', // gorilla
+    '537', // grandfather
+    '3471', // goat
+    '304', // human on furry
+    '443', // harpy
+    '6854', // hyena boy
+    '316', // josou seme
+    '433', // kappa
+    '7659', // katamari dragon
+    '130', // kangaroo boy
+    '447', // lizard girl
+    '851', // lizard guy
+    '806', // lion
+    '155', // mermaid
+    '407', // mouse girl
+    '492', // monkey
+    '156', // merman
+    '2414', // monkey girl
+    '3844', // monkey boy
+    '1972', // mouse boy
+    '1710', // mouse
+    '107', // orc
+    '264', // parasite
+    '8211', // panda boy
+    '1126', // panda girl
+    '915', // panther
+    '266', // raccoon girl
+    '579', // rabbit
+    '1099', // raccoon boy
+    '607', // reptile
+    '204', // snake girl
+    '280', // squid girl
+    '467', // sheep girl
+    '412', // slug
+    '1142', // shark girl
+    '313', // squirrel girl
+    '957', // sheep boy
+    '1613', // squid boy
+    '2004', // sheep
+    '1931', // shark
+    '100', // ttt threesome
+    '587', // tiger
+    '2252', // unicorn
 ])
 
 /**
@@ -155,7 +224,7 @@ import {
     splitTitle,
     volumeOf
 } from '../NHentai/SeriesMerge'
-import { GROUP_REFUSAL_MESSAGE, groupRefusal, groupRefusedByIds } from '../NHentai/ContentRules'
+import { GROUP_REFUSAL_MESSAGE, groupRefusal, groupRefusedByIds, TAG_ONLY_LABELS } from '../NHentai/ContentRules'
 export { cleanTitle, splitTitle } from '../NHentai/SeriesMerge'
 
 /**
@@ -228,7 +297,7 @@ interface CardRow {
  * English are dropped the same way, on the cards' language ids.
  */
 export const AsmHentaiInfo: SourceInfo = {
-    version: '1.6.3',
+    version: '1.6.4',
     name: 'AsmHentai (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -717,7 +786,7 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
             ...this.metaRow($, 'Categor')
         ]
 
-        if (tags.some((tag) => BANNED_LABELS.test(tag.name) || BANNED_TAG_IDS.has(tag.slug))) {
+        if (tags.some((tag) => BANNED_LABELS.test(tag.name) || TAG_ONLY_LABELS.test(tag.name) || BANNED_TAG_IDS.has(tag.slug))) {
             throw new Error('This gallery carries content excluded by your settings and will not be shown.')
         }
         if (groupRefusal(tags.map((tag) => tag.name)) != undefined) {
@@ -947,7 +1016,7 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
             const text = $(element).text().replace(/\s+/g, ' ').trim()
             const name = text.replace(/\s*\([\d,]+\)\s*$/, '').trim()
             if (slug == undefined || name.length === 0 || into.has(slug)) continue
-            if (BANNED_LABELS.test(name) || BANNED_LABELS.test(slug.replace(/-/g, ' '))) continue
+            if (BANNED_LABELS.test(name) || BANNED_LABELS.test(slug.replace(/-/g, ' ')) || TAG_ONLY_LABELS.test(name)) continue
 
             // Each entry states how many galleries carry it. Anything below the
             // floor is noise rather than a genre -- misspellings, stray artist

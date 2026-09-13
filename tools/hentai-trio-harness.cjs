@@ -294,25 +294,26 @@ const expectGateThrow = async (label, fn) => {
         const search = await s.getSearchResults({ title: 'milf', includedTags: [], excludedTags: [], parameters: {} }, undefined)
         check('search returns results', search.results.length > 0, `${search.results.length} results`)
 
-        // The filter screen offers browsable catalogs read off the site and the
-        // standing exclusions shown for visibility. It no longer offers a
-        // language: the source is English only, so Japanese and Chinese are
-        // not choices to be made. The banned names sit inside the popular tag
-        // list, so the scrub is asserted on the catalogs rather than assumed.
+        // The filter screen offers the tag and artist catalogs read off the
+        // site, and nothing else: no language (the source is English only), no
+        // parodies (every parody is excluded), and no "Always Excluded" list,
+        // whose "No yaoi" entries read as excluded tags on offer. The banned
+        // names sit inside the popular tag list, so the scrub is asserted on
+        // the catalogs rather than assumed -- the whole rule, not sixteen names.
         const tags = await s.getSearchTags()
-        const catalogs = tags.filter((sec) => ['tag', 'artist', 'parody'].includes(sec.id))
+        const catalogs = tags.filter((sec) => ['tag', 'artist'].includes(sec.id))
         const offered = catalogs.flatMap((sec) => sec.tags.map((t) => t.label.toLowerCase()))
         check('no language other than English is offered',
             !tags.some((sec) => sec.tags.some((t) => /^(japanese|chinese)$/i.test(t.label) && sec.id === 'language')),
             tags.map((sec) => sec.id).join(', '))
-        check('tag catalogs and exclusions all offered',
-            catalogs.length === 3
-                && catalogs.every((sec) => sec.tags.length > 50)
-                && tags[tags.length - 1]?.id === 'excluded',
+        check('tag and artist catalogs offered, and nothing that cannot return anything',
+            catalogs.length === 2 && tags.length === 2
+                && catalogs.every((sec) => sec.tags.length > 50),
             tags.map((sec) => `${sec.id}:${sec.tags.length}`).join(' '))
+        const tagOffer = (tags.find((sec) => sec.id === 'tag')?.tags ?? []).map((t) => t.label.toLowerCase())
         check('banned tags are scrubbed from the offered catalogs',
-            !offered.some((label) => ['yaoi', 'males only', 'ugly bastard', 'bald', 'tomgirl', 'crossdressing'].includes(label)),
-            `${offered.length} tags offered, none banned`)
+            !tagOffer.some((label) => Sources.bannedTagName(label)),
+            `${tagOffer.length} tags offered, none banned`)
 
         const browsable = catalogs[0]?.tags[0]
         const byTag = await s.getSearchResults({ title: '', includedTags: [browsable], excludedTags: [], parameters: {} }, undefined)

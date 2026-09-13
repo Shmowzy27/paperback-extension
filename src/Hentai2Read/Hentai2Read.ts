@@ -24,7 +24,7 @@ import {
 
 import * as cheerio from 'cheerio'
 
-import { groupRefusal, groupRefusedByIds } from '../NHentai/ContentRules'
+import { groupRefusal, groupRefusedByIds, TAG_ONLY_LABELS } from '../NHentai/ContentRules'
 
 export const H2R_DOMAIN = 'https://hentai2read.com'
 const H2R_CDN = 'https://hentaicdn.com/hentai'
@@ -65,6 +65,7 @@ const BANNED_TAG_IDS = new Set([
     '343', // Crossdressing
     '429', // Gang Rape
     '462', // Gangbang
+    '1268', // Fox Girls -- the full rule's animal tags; 47 of 48 of its cards, 1 of 143 site-wide
     '1409', // Monster Girls
     '1688' // Threesome (MMF)
 ])
@@ -109,7 +110,7 @@ interface ListingMetadata {
  * read or land in the library.
  */
 export const Hentai2ReadInfo: SourceInfo = {
-    version: '1.5.1',
+    version: '1.5.2',
     name: 'Hentai2Read (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -348,7 +349,7 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
         for (const element of $('ul.list-simple-mini a.tagButton[href*="/hentai-list/category/"]').toArray()) {
             const slug = decodeURIComponent(/\/hentai-list\/category\/([^/"]+)/.exec($(element).attr('href') ?? '')?.[1] ?? '')
             const label = $(element).text().trim()
-            if (BANNED_CATEGORY_SLUGS.has(slug) || BANNED_LABELS.test(label)) return label.length > 0 ? label : slug
+            if (BANNED_CATEGORY_SLUGS.has(slug) || BANNED_LABELS.test(label) || TAG_ONLY_LABELS.test(label)) return label.length > 0 ? label : slug
             labels.push(label.length > 0 ? label : slug)
         }
         // Group Intercourse only with one man among several women.
@@ -539,7 +540,7 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
             const slug = /\/hentai-list\/category\/([^/"]+)/.exec($(element).attr('href') ?? '')?.[1]
             const label = $(element).text().trim()
             if (slug == undefined || label.length === 0 || seen.has(slug)) continue
-            if (BANNED_CATEGORY_SLUGS.has(decodeURIComponent(slug)) || BANNED_LABELS.test(label)) continue
+            if (BANNED_CATEGORY_SLUGS.has(decodeURIComponent(slug)) || BANNED_LABELS.test(label) || TAG_ONLY_LABELS.test(label)) continue
 
             seen.add(slug)
             tags.push(App.createTag({ id: `cat:${decodeURIComponent(slug)}`, label: label }))

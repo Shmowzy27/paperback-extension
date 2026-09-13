@@ -182,8 +182,10 @@ const expectGateThrow = async (label, fn, pattern = /will not be shown/i) => {
     {
         const found = await s.getSearchResults({ title: 'boarding diary', includedTags: [], excludedTags: [], parameters: {} }, undefined)
         const ids = found.results.map((t) => t.mangaId)
-        check('search: finds both Boarding Diary manhwa, each its own tile',
-            ids.includes('boarding-diary-uncensored') && ids.includes('boarding-diary'), ids.join(', '))
+        // Two editions of one manhwa, censored and uncensored: one series, so
+        // one tile -- the uncensored one.
+        check('search: a manhwa\'s censored and uncensored editions are one tile, the uncensored',
+            ids.includes('boarding-diary-uncensored') && !ids.includes('boarding-diary'), ids.join(', '))
 
         const series = await s.getSearchResults({ title: 'Netorarete Netorasete', includedTags: [], excludedTags: [], parameters: {} }, undefined)
         const tile = series.results.find((t) => t.mangaId.startsWith('s:'))
