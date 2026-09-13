@@ -69,7 +69,7 @@ const check = (label, ok, detail) => {
     if (!ok) failures++
 }
 
-const sources = ['AsmHentai', 'NHentai', 'HentaiHere', 'Hentai2Read']
+const sources = ['AsmHentai', 'NHentai', 'HentaiHere', 'Hentai2Read', 'Hentai3z']
 
 for (const name of sources) {
     const bundle = path.join(__dirname, '..', 'bundles', name, 'source.js')
