@@ -15438,6 +15438,7 @@ var _Sources = (() => {
     return !ids.some((id) => rule.oneMale.includes(id));
   };
   var GROUP_REFUSAL_MESSAGE = "This gallery has several men with one woman, or a group with no sign of there being one man -- excluded by your settings, so it will not be shown.";
+  var TAG_ONLY_LABELS = /\b(?:fox|cow|cowman|bat|bee|shark|mouse|rat|squirrel|racc?oon|monkey|gorilla|ape|panda|lion|lioness|tiger|panther|leopard|hyena|giraffe|elephant|kangaroo|otter|dolphin|whale|eel|squid|lizard|reptile|dinosaur|dragon|chicken|sheep|goat|deer|rabbit|donkey|pegasus|unicorn|slug|snail|maggot|lamia|harpy|mermaid|merman|orc|goblin|kappa|parasite|catboy)\b|\bbunny\s*boy\b|\bbisexual\b|\bmale pregnancy\b|\bcuntboy\b|pussyboy|\bjosou\b/i;
 
   // src/AsmHentai/AsmHentai.ts
   var ASM_DOMAIN = "https://asmhentai.com";
@@ -15501,7 +15502,141 @@ var _Sources = (() => {
     "5478",
     "7381",
     "8220",
-    "8224"
+    "8224",
+    // The full rule's animal, creature and male-to-male tags (TAG_ONLY_LABELS
+    // in ../NHentai/ContentRules.ts), resolved the same way: carried by five
+    // or more cards of the tag's own listing, and by at most one card in a
+    // 78-card English sample.
+    "8210",
+    // animal on furry
+    "326",
+    // bisexual
+    "392",
+    // bunny boy
+    "2791",
+    // bear boy
+    "356",
+    // bee girl
+    "7783",
+    // bird boy
+    "4632",
+    // bat girl
+    "289",
+    // catboy
+    "448",
+    // cuntboy
+    "283",
+    // cowman
+    "650",
+    // cow
+    "508",
+    // dragon
+    "3711",
+    // deer girl
+    "2600",
+    // deer boy
+    "599",
+    // dinosaur
+    "727",
+    // dolphin
+    "487",
+    // eel
+    "7844",
+    // elephant
+    "171",
+    // fox girl
+    "172",
+    // fox boy
+    "1695",
+    // fox
+    "416",
+    // goblin
+    "399",
+    // gorilla
+    "537",
+    // grandfather
+    "3471",
+    // goat
+    "304",
+    // human on furry
+    "443",
+    // harpy
+    "6854",
+    // hyena boy
+    "316",
+    // josou seme
+    "433",
+    // kappa
+    "7659",
+    // katamari dragon
+    "130",
+    // kangaroo boy
+    "447",
+    // lizard girl
+    "851",
+    // lizard guy
+    "806",
+    // lion
+    "155",
+    // mermaid
+    "407",
+    // mouse girl
+    "492",
+    // monkey
+    "156",
+    // merman
+    "2414",
+    // monkey girl
+    "3844",
+    // monkey boy
+    "1972",
+    // mouse boy
+    "1710",
+    // mouse
+    "107",
+    // orc
+    "264",
+    // parasite
+    "8211",
+    // panda boy
+    "1126",
+    // panda girl
+    "915",
+    // panther
+    "266",
+    // raccoon girl
+    "579",
+    // rabbit
+    "1099",
+    // raccoon boy
+    "607",
+    // reptile
+    "204",
+    // snake girl
+    "280",
+    // squid girl
+    "467",
+    // sheep girl
+    "412",
+    // slug
+    "1142",
+    // shark girl
+    "313",
+    // squirrel girl
+    "957",
+    // sheep boy
+    "1613",
+    // squid boy
+    "2004",
+    // sheep
+    "1931",
+    // shark
+    "100",
+    // ttt threesome
+    "587",
+    // tiger
+    "2252"
+    // unicorn
   ]);
   var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|reverse[- ]?harem|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i;
   var ORIGINAL_PARODY_ID = "2721";
@@ -15538,7 +15673,7 @@ var _Sources = (() => {
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
   var AsmHentaiInfo = {
-    version: "1.6.3",
+    version: "1.6.4",
     name: "AsmHentai (English)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15925,7 +16060,7 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
         ...this.metaRow($2, "Tags"),
         ...this.metaRow($2, "Categor")
       ];
-      if (tags.some((tag) => BANNED_LABELS.test(tag.name) || BANNED_TAG_IDS.has(tag.slug))) {
+      if (tags.some((tag) => BANNED_LABELS.test(tag.name) || TAG_ONLY_LABELS.test(tag.name) || BANNED_TAG_IDS.has(tag.slug))) {
         throw new Error("This gallery carries content excluded by your settings and will not be shown.");
       }
       if (groupRefusal(tags.map((tag) => tag.name)) != void 0) {
@@ -16097,7 +16232,7 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
         const text3 = $2(element).text().replace(/\s+/g, " ").trim();
         const name = text3.replace(/\s*\([\d,]+\)\s*$/, "").trim();
         if (slug == void 0 || name.length === 0 || into.has(slug)) continue;
-        if (BANNED_LABELS.test(name) || BANNED_LABELS.test(slug.replace(/-/g, " "))) continue;
+        if (BANNED_LABELS.test(name) || BANNED_LABELS.test(slug.replace(/-/g, " ")) || TAG_ONLY_LABELS.test(name)) continue;
         const count = Number((/\(([\d,]+)\)\s*$/.exec(text3)?.[1] ?? "0").replace(/,/g, ""));
         if (count > 0 && count < MIN_CATALOG_GALLERIES) continue;
         into.set(slug, name);

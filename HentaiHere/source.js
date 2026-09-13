@@ -14899,6 +14899,7 @@ var _Sources = (() => {
     return labels.some((label) => ONE_MALE_LABEL.test(label) && !REVERSE_HAREM_LABEL.test(label)) ? void 0 : group;
   };
   var GROUP_REFUSAL_MESSAGE = "This gallery has several men with one woman, or a group with no sign of there being one man -- excluded by your settings, so it will not be shown.";
+  var TAG_ONLY_LABELS = /\b(?:fox|cow|cowman|bat|bee|shark|mouse|rat|squirrel|racc?oon|monkey|gorilla|ape|panda|lion|lioness|tiger|panther|leopard|hyena|giraffe|elephant|kangaroo|otter|dolphin|whale|eel|squid|lizard|reptile|dinosaur|dragon|chicken|sheep|goat|deer|rabbit|donkey|pegasus|unicorn|slug|snail|maggot|lamia|harpy|mermaid|merman|orc|goblin|kappa|parasite|catboy)\b|\bbunny\s*boy\b|\bbisexual\b|\bmale pregnancy\b|\bcuntboy\b|pussyboy|\bjosou\b/i;
 
   // src/HentaiHere/HentaiHere.ts
   var HH_DOMAIN = "https://hentaihere.com";
@@ -14912,7 +14913,7 @@ var _Sources = (() => {
     { id: "last-updated", label: "Last Updated (Filtered)", sort: "last-updated" }
   ];
   var HentaiHereInfo = {
-    version: "1.4.3",
+    version: "1.4.4",
     name: "HentaiHere (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15044,7 +15045,7 @@ Please go to the homepage of <${HentaiHereInfo.name}> and press the cloud icon.`
         const tagId = /\/search\/(T\d+)/.exec(anchor.attr("href") ?? "")?.[1];
         const label = anchor.text().trim();
         if (tagId == void 0 || label.length === 0 || seen.has(tagId)) continue;
-        if (BANNED_TAG_IDS.some((id) => tagId === `T${id}`) || BANNED_LABELS.test(label)) banned = banned ?? label;
+        if (BANNED_TAG_IDS.some((id) => tagId === `T${id}`) || BANNED_LABELS.test(label) || TAG_ONLY_LABELS.test(label)) banned = banned ?? label;
         labels.push(label);
         seen.add(tagId);
         tags.push(App.createTag({ id: tagId, label }));
@@ -15076,7 +15077,7 @@ Please go to the homepage of <${HentaiHereInfo.name}> and press the cloud icon.`
         const $gate = load(html3);
         const labels = $gate('a[href*="/search/T"]').toArray().map((element) => $gate(element).text().trim());
         const ids = $gate('a[href*="/search/T"]').toArray().map((element) => /\/search\/(T\d+)/.exec($gate(element).attr("href") ?? "")?.[1] ?? "");
-        if (ids.some((tagId) => BANNED_TAG_IDS.some((id) => tagId === `T${id}`)) || labels.some((label) => BANNED_LABELS.test(label)) || groupRefusal(labels) != void 0) {
+        if (ids.some((tagId) => BANNED_TAG_IDS.some((id) => tagId === `T${id}`)) || labels.some((label) => BANNED_LABELS.test(label) || TAG_ONLY_LABELS.test(label)) || groupRefusal(labels) != void 0) {
           throw new Error("This title carries content excluded by your settings and will not be shown.");
         }
       }
@@ -15180,7 +15181,7 @@ Please go to the homepage of <${HentaiHereInfo.name}> and press the cloud icon.`
             const tagId = /\/search\/(T\d+)/.exec(anchor.attr("href") ?? "")?.[1];
             const name = anchor.text().trim();
             if (tagId == void 0 || name.length === 0 || seen.has(tagId)) continue;
-            if (BANNED_TAG_IDS.some((id) => tagId === `T${id}`) || BANNED_LABELS.test(name)) continue;
+            if (BANNED_TAG_IDS.some((id) => tagId === `T${id}`) || BANNED_LABELS.test(name) || TAG_ONLY_LABELS.test(name)) continue;
             seen.add(tagId);
             tags.push(App.createTag({ id: tagId, label: name }));
           }

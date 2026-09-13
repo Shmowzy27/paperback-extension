@@ -14903,6 +14903,7 @@ var _Sources = (() => {
     if (ids.some((id) => rule.oneFemale.includes(id))) return true;
     return !ids.some((id) => rule.oneMale.includes(id));
   };
+  var TAG_ONLY_LABELS = /\b(?:fox|cow|cowman|bat|bee|shark|mouse|rat|squirrel|racc?oon|monkey|gorilla|ape|panda|lion|lioness|tiger|panther|leopard|hyena|giraffe|elephant|kangaroo|otter|dolphin|whale|eel|squid|lizard|reptile|dinosaur|dragon|chicken|sheep|goat|deer|rabbit|donkey|pegasus|unicorn|slug|snail|maggot|lamia|harpy|mermaid|merman|orc|goblin|kappa|parasite|catboy)\b|\bbunny\s*boy\b|\bbisexual\b|\bmale pregnancy\b|\bcuntboy\b|pussyboy|\bjosou\b/i;
 
   // src/Hentai2Read/Hentai2Read.ts
   var H2R_DOMAIN = "https://hentai2read.com";
@@ -14920,6 +14921,8 @@ var _Sources = (() => {
     // Gang Rape
     "462",
     // Gangbang
+    "1268",
+    // Fox Girls -- the full rule's animal tags; 47 of 48 of its cards, 1 of 143 site-wide
     "1409",
     // Monster Girls
     "1688"
@@ -14955,7 +14958,7 @@ var _Sources = (() => {
     { id: "trending", label: "Trending", path: (page) => `/hentai-list/all/any/all/trending/${page}/` }
   ];
   var Hentai2ReadInfo = {
-    version: "1.5.1",
+    version: "1.5.2",
     name: "Hentai2Read (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15145,7 +15148,7 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
       for (const element of $2('ul.list-simple-mini a.tagButton[href*="/hentai-list/category/"]').toArray()) {
         const slug = decodeURIComponent(/\/hentai-list\/category\/([^/"]+)/.exec($2(element).attr("href") ?? "")?.[1] ?? "");
         const label = $2(element).text().trim();
-        if (BANNED_CATEGORY_SLUGS.has(slug) || BANNED_LABELS.test(label)) return label.length > 0 ? label : slug;
+        if (BANNED_CATEGORY_SLUGS.has(slug) || BANNED_LABELS.test(label) || TAG_ONLY_LABELS.test(label)) return label.length > 0 ? label : slug;
         labels.push(label.length > 0 ? label : slug);
       }
       return groupRefusal(labels);
@@ -15281,7 +15284,7 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
         const slug = /\/hentai-list\/category\/([^/"]+)/.exec($2(element).attr("href") ?? "")?.[1];
         const label = $2(element).text().trim();
         if (slug == void 0 || label.length === 0 || seen.has(slug)) continue;
-        if (BANNED_CATEGORY_SLUGS.has(decodeURIComponent(slug)) || BANNED_LABELS.test(label)) continue;
+        if (BANNED_CATEGORY_SLUGS.has(decodeURIComponent(slug)) || BANNED_LABELS.test(label) || TAG_ONLY_LABELS.test(label)) continue;
         seen.add(slug);
         tags.push(App.createTag({ id: `cat:${decodeURIComponent(slug)}`, label }));
       }
