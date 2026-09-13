@@ -1232,6 +1232,9 @@ var _Sources = (() => {
     if (!belongs && sameArtist && candidate.multiWork) {
       belongs = relatives.some((relative) => relative.multiWork && sharesSubtitle(relative.raw, candidate.raw));
     }
+    if (!belongs && sameArtist) {
+      belongs = relatives.some((relative) => seriesKey(splitTitle(relative.raw, relative.multiWork).base) === key);
+    }
     const title = cleanTitle(candidate.raw) || candidate.raw;
     return {
       belongs,
@@ -1258,6 +1261,14 @@ var _Sources = (() => {
   };
   var nothingToShow = (base, refused, englishOnly) => refused > 0 ? `Every volume of "${base}" is left out by your settings (an excluded tag or a parody), so it will not be shown.` : englishOnly ? `No volumes of "${base}" can be shown: this source shows English galleries only, and leaves out anything your settings exclude.` : `No volumes of "${base}" can be shown: the site returned none, or your settings leave them all out.`;
 
+  // src/NHentai/ContentRules.ts
+  var groupRefusedByIds = (ids, rule) => {
+    if (!ids.some((id) => rule.group.includes(id))) return false;
+    if (ids.some((id) => rule.oneFemale.includes(id))) return true;
+    return !ids.some((id) => rule.oneMale.includes(id));
+  };
+  var GROUP_REFUSAL_MESSAGE = "This gallery has several men with one woman, or a group with no sign of there being one man -- excluded by your settings, so it will not be shown.";
+
   // src/NHentai/NHentai.ts
   var NH_DOMAIN = "https://nhentai.net";
   var NH_API = `${NH_DOMAIN}/api/v2`;
@@ -1278,7 +1289,6 @@ var _Sources = (() => {
     { id: 133145, name: "grandfather" },
     { id: 29013, name: "dilf" },
     // group and arrangement
-    { id: 8010, name: "group" },
     { id: 31880, name: "bbm" },
     { id: 7256, name: "mmf threesome" },
     // creatures
@@ -1300,6 +1310,7 @@ var _Sources = (() => {
     "gang rape",
     "gangbang",
     "orgy",
+    "reverse harem",
     // animals and creatures
     "bestiality",
     "low bestiality",
@@ -1334,6 +1345,7 @@ var _Sources = (() => {
   var ENGLISH_ID = 12227;
   var MULTI_WORK_SERIES_ID = 21572;
   var isMultiWork = (tagIds) => (tagIds ?? []).includes(MULTI_WORK_SERIES_ID);
+  var GROUP_RULE = { group: [8010], oneMale: [35763, 15348, 15785], oneFemale: [35762] };
   var TAG_TYPES = [
     { type: "tag", label: "Tags" },
     { type: "artist", label: "Artists" },
@@ -1360,7 +1372,7 @@ var _Sources = (() => {
     return phrase.length > 0 ? `"${phrase}"` : base;
   };
   var NHentaiInfo = {
-    version: "2.4.1",
+    version: "2.4.2",
     name: "nhentai (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -1534,6 +1546,7 @@ Please go to the homepage of <${this.displayName}> and press the cloud icon.`);
       const ids = tagIds ?? [];
       if (!ids.includes(ENGLISH_ID)) return false;
       if (ids.some((id) => BANNED_IDS.has(id))) return false;
+      if (groupRefusedByIds(ids, GROUP_RULE)) return false;
       return parodies == void 0 || !ids.some((id) => parodies.has(id));
     }
     /**
@@ -1670,6 +1683,7 @@ Please go to the homepage of <${this.displayName}> and press the cloud icon.`);
               this.searchUrl(searchTermFor(`${creator.type}:${creator.name}`, false), "date", 1)
             )).result ?? [];
             consider(byArtist, true);
+            consider(byArtist, true);
           }
         } catch {
         }
@@ -1771,6 +1785,9 @@ Please go to the homepage of <${this.displayName}> and press the cloud icon.`);
       if (tags.some((tag) => BANNED_IDS.has(tag.id))) {
         throw new Error("This gallery carries content excluded by your settings and will not be shown.");
       }
+      if (groupRefusedByIds(tags.map((tag) => tag.id), GROUP_RULE)) {
+        throw new Error(GROUP_REFUSAL_MESSAGE);
+      }
       if (tags.some((tag) => tag.type === "parody" && tag.id !== ORIGINAL_PARODY_ID)) {
         throw new Error("This gallery is a parody, which your settings exclude, and will not be shown.");
       }
@@ -1819,6 +1836,9 @@ Please go to the homepage of <${this.displayName}> and press the cloud icon.`);
         }
         if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
           throw new Error("This gallery carries content excluded by your settings and will not be shown.");
+        }
+        if (groupRefusedByIds((gallery.tags ?? []).map((tag) => tag.id), GROUP_RULE)) {
+          throw new Error(GROUP_REFUSAL_MESSAGE);
         }
         if ((gallery.tags ?? []).some((tag) => tag.type === "parody" && tag.id !== ORIGINAL_PARODY_ID)) {
           throw new Error("This gallery is a parody, which your settings exclude, and will not be shown.");
@@ -1943,7 +1963,10 @@ Please go to the homepage of <${this.displayName}> and press the cloud icon.`);
       sections.push(App.createTagSection({
         id: "excluded",
         label: "Always Excluded",
-        tags: NH_BANNED.map((tag) => App.createTag({ id: `x-${tag.id}`, label: `No ${tag.name}` }))
+        tags: [
+          ...NH_BANNED.map((tag) => App.createTag({ id: `x-${tag.id}`, label: `No ${tag.name}` })),
+          App.createTag({ id: "x-group-rule", label: "No group unless one man (sole male, ffm, harem)" })
+        ]
       }));
       return sections;
     }
@@ -1972,7 +1995,7 @@ Please go to the homepage of <${this.displayName}> and press the cloud icon.`);
   // src/NHentaiNew/NHentaiNew.ts
   var NHentaiNewInfo = {
     ...NHentaiInfo,
-    version: "1.0.0",
+    version: "1.0.1",
     name: "nhentai (new)",
     description: "nhentai with every rule of the filtered source -- English only, the standing exclusions, no parodies, and each series merged into one entry -- under a library of its own."
   };

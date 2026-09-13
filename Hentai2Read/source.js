@@ -14887,18 +14887,33 @@ var _Sources = (() => {
   var parse5 = getParse((content, options, isDocument2, context) => options._useHtmlParser2 ? parseDocument(content, options) : parseWithParse5(content, options, isDocument2, context));
   var load = getLoad(parse5, (dom, options) => options._useHtmlParser2 ? esm_default(dom, options) : renderWithParse5(dom));
 
+  // src/NHentai/ContentRules.ts
+  var GROUP_LABEL = /\bgroup\b/i;
+  var ONE_MALE_LABEL = /\bsole male\b|\bharem\b|\bf{2,}m\b|\bmf{2,}\b/i;
+  var ONE_FEMALE_LABEL = /\bsole female\b/i;
+  var REVERSE_HAREM_LABEL = /reverse[- ]?harem/i;
+  var groupRefusal = (labels) => {
+    const group = labels.find((label) => GROUP_LABEL.test(label));
+    if (group == void 0) return void 0;
+    if (labels.some((label) => ONE_FEMALE_LABEL.test(label) || REVERSE_HAREM_LABEL.test(label))) return group;
+    return labels.some((label) => ONE_MALE_LABEL.test(label) && !REVERSE_HAREM_LABEL.test(label)) ? void 0 : group;
+  };
+  var groupRefusedByIds = (ids, rule) => {
+    if (!ids.some((id) => rule.group.includes(id))) return false;
+    if (ids.some((id) => rule.oneFemale.includes(id))) return true;
+    return !ids.some((id) => rule.oneMale.includes(id));
+  };
+
   // src/Hentai2Read/Hentai2Read.ts
   var H2R_DOMAIN = "https://hentai2read.com";
   var H2R_CDN = "https://hentaicdn.com/hentai";
-  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i;
+  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|reverse[- ]?harem|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i;
   var BANNED_CATEGORY_SLUGS = /* @__PURE__ */ new Set(["Yaoi"]);
   var BANNED_TAG_IDS = /* @__PURE__ */ new Set([
     "24",
     // Tentacles
     "27",
     // Boy Love (Yaoi)
-    "311",
-    // Group Intercourse
     "343",
     // Crossdressing
     "429",
@@ -14910,6 +14925,7 @@ var _Sources = (() => {
     "1688"
     // Threesome (MMF)
   ]);
+  var GROUP_RULE = { group: ["311"], oneMale: ["31", "1686"], oneFemale: [] };
   var NOT_SERIES = /* @__PURE__ */ new Set([
     "latest",
     "trending",
@@ -14939,7 +14955,7 @@ var _Sources = (() => {
     { id: "trending", label: "Trending", path: (page) => `/hentai-list/all/any/all/trending/${page}/` }
   ];
   var Hentai2ReadInfo = {
-    version: "1.5.0",
+    version: "1.5.1",
     name: "Hentai2Read (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15037,6 +15053,7 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
         const card = $2(element);
         const ids = (card.attr("data-tags") ?? "").split("-");
         if (ids.some((id) => BANNED_TAG_IDS.has(id))) continue;
+        if (groupRefusedByIds(ids, GROUP_RULE)) continue;
         if (filters2 != void 0) {
           if (filters2.exclude.some((id) => ids.includes(id))) continue;
           if (!filters2.include.every((id) => ids.includes(id))) continue;
@@ -15124,12 +15141,14 @@ Please go to the homepage of <${Hentai2ReadInfo.name}> and press the cloud icon.
      * a page-wide scan gated every single title because of it.
      */
     bannedFrom($2) {
+      const labels = [];
       for (const element of $2('ul.list-simple-mini a.tagButton[href*="/hentai-list/category/"]').toArray()) {
         const slug = decodeURIComponent(/\/hentai-list\/category\/([^/"]+)/.exec($2(element).attr("href") ?? "")?.[1] ?? "");
         const label = $2(element).text().trim();
         if (BANNED_CATEGORY_SLUGS.has(slug) || BANNED_LABELS.test(label)) return label.length > 0 ? label : slug;
+        labels.push(label.length > 0 ? label : slug);
       }
-      return void 0;
+      return groupRefusal(labels);
     }
     async getMangaDetails(mangaId) {
       const html3 = await this.fetchHtml(this.getMangaShareUrl(mangaId));

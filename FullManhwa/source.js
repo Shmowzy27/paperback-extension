@@ -14911,9 +14911,12 @@ var _Sources = (() => {
     "genderswap",
     "monster",
     "monsters",
-    "monsters-action"
+    "monsters-action",
+    // One woman with several men, excluded by the user's rule on group
+    // scenes (../NHentai/ContentRules.ts).
+    "reverse-harem"
   ];
-  var SM_BANNED_GENRES = /\bmonsters?\b|\baliens?\b|\banimals?\b|crossdress|gender[- ]?bender|genderswap|\byaoi\b|boys?.?love|shounen[ -]?ai/i;
+  var SM_BANNED_GENRES = /\bmonsters?\b|\baliens?\b|\banimals?\b|crossdress|gender[- ]?bender|genderswap|\byaoi\b|boys?.?love|shounen[ -]?ai|reverse[- ]?harem/i;
   var SM_GENRE_PREFIX = "genre:";
   var PLACEHOLDER = /^(updating|unknown|none|n\/a|-)$/i;
   var routeFor = (id) => {
@@ -15129,7 +15132,7 @@ var _Sources = (() => {
 
   // src/FullManhwa/FullManhwa.ts
   var FullManhwaInfo = {
-    version: "2.5.0",
+    version: "2.5.1",
     name: "SayManhwa",
     icon: "icon.png",
     author: "Shmowzy27",

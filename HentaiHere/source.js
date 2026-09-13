@@ -14887,11 +14887,24 @@ var _Sources = (() => {
   var parse5 = getParse((content, options, isDocument2, context) => options._useHtmlParser2 ? parseDocument(content, options) : parseWithParse5(content, options, isDocument2, context));
   var load = getLoad(parse5, (dom, options) => options._useHtmlParser2 ? esm_default(dom, options) : renderWithParse5(dom));
 
+  // src/NHentai/ContentRules.ts
+  var GROUP_LABEL = /\bgroup\b/i;
+  var ONE_MALE_LABEL = /\bsole male\b|\bharem\b|\bf{2,}m\b|\bmf{2,}\b/i;
+  var ONE_FEMALE_LABEL = /\bsole female\b/i;
+  var REVERSE_HAREM_LABEL = /reverse[- ]?harem/i;
+  var groupRefusal = (labels) => {
+    const group = labels.find((label) => GROUP_LABEL.test(label));
+    if (group == void 0) return void 0;
+    if (labels.some((label) => ONE_FEMALE_LABEL.test(label) || REVERSE_HAREM_LABEL.test(label))) return group;
+    return labels.some((label) => ONE_MALE_LABEL.test(label) && !REVERSE_HAREM_LABEL.test(label)) ? void 0 : group;
+  };
+  var GROUP_REFUSAL_MESSAGE = "This gallery has several men with one woman, or a group with no sign of there being one man -- excluded by your settings, so it will not be shown.";
+
   // src/HentaiHere/HentaiHere.ts
   var HH_DOMAIN = "https://hentaihere.com";
   var HH_CDN = "https://hentaicdn.com/hentai";
-  var BANNED_TAG_ID = "27";
-  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i;
+  var BANNED_TAG_IDS = ["27", "567"];
+  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|reverse[- ]?harem|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i;
   var SEARCH_SUFFIX = " -yaoi";
   var SECTIONS = [
     { id: "newest", label: "Newest (Filtered)", sort: "newest" },
@@ -14899,7 +14912,7 @@ var _Sources = (() => {
     { id: "last-updated", label: "Last Updated (Filtered)", sort: "last-updated" }
   ];
   var HentaiHereInfo = {
-    version: "1.4.2",
+    version: "1.4.3",
     name: "HentaiHere (Filtered)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -14980,7 +14993,7 @@ Please go to the homepage of <${HentaiHereInfo.name}> and press the cloud icon.`
      * cookie store when the redirect lands, so later pages just work.
      */
     async openFilter(tagIn, tagOut) {
-      const excluded = [BANNED_TAG_ID];
+      const excluded = [...BANNED_TAG_IDS];
       for (const id of tagOut ?? []) {
         if (!excluded.includes(id)) excluded.push(id);
       }
@@ -15024,18 +15037,26 @@ Please go to the homepage of <${HentaiHereInfo.name}> and press the cloud icon.`
       const image = ($2('meta[property="og:image"]').attr("content") ?? `${HH_CDN}/cover/_${mangaId}.jpg`).trim();
       const tags = [];
       const seen = /* @__PURE__ */ new Set();
-      let banned = false;
+      let banned;
+      const labels = [];
       for (const element of $2('a[href*="/search/T"]').toArray()) {
         const anchor = $2(element);
         const tagId = /\/search\/(T\d+)/.exec(anchor.attr("href") ?? "")?.[1];
         const label = anchor.text().trim();
         if (tagId == void 0 || label.length === 0 || seen.has(tagId)) continue;
-        if (tagId === `T${BANNED_TAG_ID}` || BANNED_LABELS.test(label)) banned = true;
+        if (BANNED_TAG_IDS.some((id) => tagId === `T${id}`) || BANNED_LABELS.test(label)) banned = banned ?? label;
+        labels.push(label);
         seen.add(tagId);
         tags.push(App.createTag({ id: tagId, label }));
       }
-      if (banned || BANNED_LABELS.test(title)) {
-        throw new Error("This title carries content excluded by your settings (BL/yaoi) and will not be shown.");
+      if (banned != void 0) {
+        throw new Error(`This title is filed under "${banned}", which is excluded by your settings, and will not be shown.`);
+      }
+      if (groupRefusal(labels) != void 0) {
+        throw new Error(GROUP_REFUSAL_MESSAGE);
+      }
+      if (BANNED_LABELS.test(title)) {
+        throw new Error("This title carries content excluded by your settings and will not be shown.");
       }
       const status = /status[^a-z]{0,10}completed/i.test(html3) ? "Completed" : "Ongoing";
       return App.createSourceManga({
@@ -15051,8 +15072,13 @@ Please go to the homepage of <${HentaiHereInfo.name}> and press the cloud icon.`
     }
     async getChapters(mangaId) {
       const html3 = await this.fetchHtml(this.getMangaShareUrl(mangaId));
-      if (BANNED_LABELS.test(load(html3)('a[href*="/search/T"]').text())) {
-        throw new Error("This title carries content excluded by your settings (BL/yaoi) and will not be shown.");
+      {
+        const $gate = load(html3);
+        const labels = $gate('a[href*="/search/T"]').toArray().map((element) => $gate(element).text().trim());
+        const ids = $gate('a[href*="/search/T"]').toArray().map((element) => /\/search\/(T\d+)/.exec($gate(element).attr("href") ?? "")?.[1] ?? "");
+        if (ids.some((tagId) => BANNED_TAG_IDS.some((id) => tagId === `T${id}`)) || labels.some((label) => BANNED_LABELS.test(label)) || groupRefusal(labels) != void 0) {
+          throw new Error("This title carries content excluded by your settings and will not be shown.");
+        }
       }
       const rows = [];
       const seen = /* @__PURE__ */ new Set();
@@ -15154,7 +15180,7 @@ Please go to the homepage of <${HentaiHereInfo.name}> and press the cloud icon.`
             const tagId = /\/search\/(T\d+)/.exec(anchor.attr("href") ?? "")?.[1];
             const name = anchor.text().trim();
             if (tagId == void 0 || name.length === 0 || seen.has(tagId)) continue;
-            if (tagId === `T${BANNED_TAG_ID}` || BANNED_LABELS.test(name)) continue;
+            if (BANNED_TAG_IDS.some((id) => tagId === `T${id}`) || BANNED_LABELS.test(name)) continue;
             seen.add(tagId);
             tags.push(App.createTag({ id: tagId, label: name }));
           }

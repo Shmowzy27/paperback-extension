@@ -15392,6 +15392,9 @@ var _Sources = (() => {
     if (!belongs && sameArtist && candidate.multiWork) {
       belongs = relatives.some((relative) => relative.multiWork && sharesSubtitle(relative.raw, candidate.raw));
     }
+    if (!belongs && sameArtist) {
+      belongs = relatives.some((relative) => seriesKey(splitTitle(relative.raw, relative.multiWork).base) === key);
+    }
     const title = cleanTitle(candidate.raw) || candidate.raw;
     return {
       belongs,
@@ -15418,10 +15421,27 @@ var _Sources = (() => {
   };
   var nothingToShow = (base, refused, englishOnly) => refused > 0 ? `Every volume of "${base}" is left out by your settings (an excluded tag or a parody), so it will not be shown.` : englishOnly ? `No volumes of "${base}" can be shown: this source shows English galleries only, and leaves out anything your settings exclude.` : `No volumes of "${base}" can be shown: the site returned none, or your settings leave them all out.`;
 
+  // src/NHentai/ContentRules.ts
+  var GROUP_LABEL = /\bgroup\b/i;
+  var ONE_MALE_LABEL = /\bsole male\b|\bharem\b|\bf{2,}m\b|\bmf{2,}\b/i;
+  var ONE_FEMALE_LABEL = /\bsole female\b/i;
+  var REVERSE_HAREM_LABEL = /reverse[- ]?harem/i;
+  var groupRefusal = (labels) => {
+    const group = labels.find((label) => GROUP_LABEL.test(label));
+    if (group == void 0) return void 0;
+    if (labels.some((label) => ONE_FEMALE_LABEL.test(label) || REVERSE_HAREM_LABEL.test(label))) return group;
+    return labels.some((label) => ONE_MALE_LABEL.test(label) && !REVERSE_HAREM_LABEL.test(label)) ? void 0 : group;
+  };
+  var groupRefusedByIds = (ids, rule) => {
+    if (!ids.some((id) => rule.group.includes(id))) return false;
+    if (ids.some((id) => rule.oneFemale.includes(id))) return true;
+    return !ids.some((id) => rule.oneMale.includes(id));
+  };
+  var GROUP_REFUSAL_MESSAGE = "This gallery has several men with one woman, or a group with no sign of there being one man -- excluded by your settings, so it will not be shown.";
+
   // src/AsmHentai/AsmHentai.ts
   var ASM_DOMAIN = "https://asmhentai.com";
   var BANNED_TAG_IDS = /* @__PURE__ */ new Set([
-    "8",
     "13",
     "24",
     "84",
@@ -15477,12 +15497,13 @@ var _Sources = (() => {
     "1469",
     "1580",
     "3513",
+    "4021",
     "5478",
     "7381",
     "8220",
     "8224"
   ]);
-  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i;
+  var BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|reverse[- ]?harem|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i;
   var ORIGINAL_PARODY_ID = "2721";
   var MIN_CATALOG_GALLERIES = 50;
   var ENGLISH_LANGUAGE_ID = "1";
@@ -15504,6 +15525,7 @@ var _Sources = (() => {
   ];
   var CATALOG_LETTERS = "abcdefghijklmnopqrstuvwxyz".split("").concat(["num"]);
   var MULTI_WORK_TAG_ID = "25";
+  var GROUP_RULE = { group: ["8"], oneMale: ["97", "38", "54"], oneFemale: ["96"] };
   var creditIdsOf = (card) => {
     const ids = [];
     for (const [attribute, type] of [["data-artists", "artist"], ["data-groups", "group"]]) {
@@ -15516,7 +15538,7 @@ var _Sources = (() => {
   var isSeriesId = (mangaId) => mangaId.startsWith(SERIES_PREFIX);
   var baseFromSeriesId = (mangaId) => mangaId.slice(SERIES_PREFIX.length);
   var AsmHentaiInfo = {
-    version: "1.6.2",
+    version: "1.6.3",
     name: "AsmHentai (English)",
     icon: "icon.png",
     author: "Shmowzy27",
@@ -15664,6 +15686,7 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
         if (!languages.includes(ENGLISH_LANGUAGE_ID)) continue;
         const tagIds = (card.attr("data-tags") ?? "").split(/\s+/).filter((id) => id.length > 0);
         if (tagIds.some((id) => BANNED_TAG_IDS.has(id))) continue;
+        if (groupRefusedByIds(tagIds, GROUP_RULE)) continue;
         const galleryId = /\/g\/(\d+)\//.exec(card.find('a[href^="/g/"]').first().attr("href") ?? "")?.[1];
         const raw = card.find("h2.caption").first().text().replace(/\s+/g, " ").trim();
         if (galleryId == void 0 || raw.length === 0) continue;
@@ -15840,7 +15863,9 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
           const creator = artists[0] ?? this.metaRow($2, "Groups")[0];
           if (creator != void 0) {
             const type = artists.length > 0 ? "artist" : "group";
-            consider(this.parseCards(await this.loadPage(`${ASM_DOMAIN}/${type}/${creator.slug}/`)), true);
+            const byArtist = this.parseCards(await this.loadPage(`${ASM_DOMAIN}/${type}/${creator.slug}/`));
+            consider(byArtist, true);
+            consider(byArtist, true);
           }
         } catch {
         }
@@ -15902,6 +15927,9 @@ Please go to the homepage of <${AsmHentaiInfo.name}> and press the cloud icon.`)
       ];
       if (tags.some((tag) => BANNED_LABELS.test(tag.name) || BANNED_TAG_IDS.has(tag.slug))) {
         throw new Error("This gallery carries content excluded by your settings and will not be shown.");
+      }
+      if (groupRefusal(tags.map((tag) => tag.name)) != void 0) {
+        throw new Error(GROUP_REFUSAL_MESSAGE);
       }
       const parodies = this.metaRow($2, "Parodies").map((entry) => entry.slug);
       if (parodies.some((slug) => slug !== "original")) {
