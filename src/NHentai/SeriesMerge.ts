@@ -801,6 +801,13 @@ export const volumeOf = (
         belongs = relatives.some((relative) => relative.multiWork && sharesSubtitle(relative.raw, candidate.raw))
     }
 
+    // A volume of a book already gathered into the series belongs with it:
+    // once "Mesu no Ie" has joined "Mesunoyado" by its subtitle, "Mesu no Ie
+    // III" -- whose subtitle opens differently -- belongs by its name.
+    if (!belongs && sameArtist) {
+        belongs = relatives.some((relative) => seriesKey(splitTitle(relative.raw, relative.multiWork).base) === key)
+    }
+
     const title = cleanTitle(candidate.raw) || candidate.raw
     return {
         belongs: belongs, volume: split.volume, numbered: split.numbered,

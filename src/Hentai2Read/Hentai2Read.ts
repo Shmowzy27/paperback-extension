@@ -24,6 +24,8 @@ import {
 
 import * as cheerio from 'cheerio'
 
+import { groupRefusal, groupRefusedByIds } from '../NHentai/ContentRules'
+
 export const H2R_DOMAIN = 'https://hentai2read.com'
 const H2R_CDN = 'https://hentaicdn.com/hentai'
 
@@ -36,7 +38,7 @@ const H2R_CDN = 'https://hentaicdn.com/hentai'
  * enforcement is the details gate plus scrubbing of everything the source
  * itself offers (see the class comment).
  */
-const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i
+const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|reverse[- ]?harem|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i
 const BANNED_CATEGORY_SLUGS = new Set(['Yaoi'])
 
 /**
@@ -60,13 +62,21 @@ const BANNED_CATEGORY_SLUGS = new Set(['Yaoi'])
 const BANNED_TAG_IDS = new Set([
     '24', // Tentacles
     '27', // Boy Love (Yaoi)
-    '311', // Group Intercourse
     '343', // Crossdressing
     '429', // Gang Rape
     '462', // Gangbang
     '1409', // Monster Girls
     '1688' // Threesome (MMF)
 ])
+
+/**
+ * The group rule (../NHentai/ContentRules.ts) in this site's category ids:
+ * Group Intercourse (311) is allowed with Harem (31) or Threesome (MFF)
+ * (1686) -- one man among several women -- and refused otherwise. The site
+ * has no "sole female" category, and Threesome (MMF), Gangbang and Gang Rape
+ * stay excluded outright above.
+ */
+const GROUP_RULE = { group: ['311'], oneMale: ['31', '1686'], oneFemale: [] as string[] }
 
 /** Path segments that look like series slugs but are site pages. */
 const NOT_SERIES = new Set([
@@ -99,7 +109,7 @@ interface ListingMetadata {
  * read or land in the library.
  */
 export const Hentai2ReadInfo: SourceInfo = {
-    version: '1.5.0',
+    version: '1.5.1',
     name: 'Hentai2Read (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -200,6 +210,7 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
 
             const ids = (card.attr('data-tags') ?? '').split('-')
             if (ids.some((id) => BANNED_TAG_IDS.has(id))) continue
+            if (groupRefusedByIds(ids, GROUP_RULE)) continue
 
             // Whatever the reader chose, applied on the card's own ids.
             if (filters != undefined) {
@@ -333,12 +344,15 @@ export class Hentai2Read implements SearchResultsProviding, MangaProviding, Chap
      * a page-wide scan gated every single title because of it.
      */
     private bannedFrom($: cheerio.CheerioAPI): string | undefined {
+        const labels: string[] = []
         for (const element of $('ul.list-simple-mini a.tagButton[href*="/hentai-list/category/"]').toArray()) {
             const slug = decodeURIComponent(/\/hentai-list\/category\/([^/"]+)/.exec($(element).attr('href') ?? '')?.[1] ?? '')
             const label = $(element).text().trim()
             if (BANNED_CATEGORY_SLUGS.has(slug) || BANNED_LABELS.test(label)) return label.length > 0 ? label : slug
+            labels.push(label.length > 0 ? label : slug)
         }
-        return undefined
+        // Group Intercourse only with one man among several women.
+        return groupRefusal(labels)
     }
 
     async getMangaDetails(mangaId: string): Promise<SourceManga> {

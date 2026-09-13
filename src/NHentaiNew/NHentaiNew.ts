@@ -19,7 +19,7 @@ import { NHentai, NHentaiInfo } from '../NHentai/NHentai'
  */
 export const NHentaiNewInfo: SourceInfo = {
     ...NHentaiInfo,
-    version: '1.0.0',
+    version: '1.0.1',
     name: 'nhentai (new)',
     description: 'nhentai with every rule of the filtered source -- English only, the standing exclusions, no parodies, and each series merged into one entry -- under a library of its own.'
 }

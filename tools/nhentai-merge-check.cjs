@@ -483,6 +483,19 @@ const seriesOffline = async () => {
     ]).getChapters('s:Mesunoyado')
     check('series: Mesunoyado opens with Mesu no Ie I and II, and not the excluded III',
         idsOf(amamOpened) === '51,52,53', amamOpened.map((c) => `${c.chapNum}:${c.id}`).join(' '))
+
+    // The group rule as the user set it: Mesu no Ie III is group because it is
+    // an ffm threesome -- one man, several women -- and that is allowed. So with
+    // its real tags (group, sole male, ffm threesome) it joins the series; it
+    // comes first in the artist's works, as the newest, so it can only belong
+    // by its name once Mesu no Ie I has joined by its subtitle.
+    const SOLE_MALE = 35763
+    const FFM = 15348
+    const amamWithIII = await fakeSeries([listed(51, MESUNOYADO, [EN, MWS])], [
+        listed(54, IE_3, [EN, MWS, GROUP, SOLE_MALE, FFM]), listed(52, IE_1, [EN, MWS]), listed(53, IE_2, [EN, MWS])
+    ]).getChapters('s:Mesunoyado')
+    check('series: with its real tags, Mesu no Ie III (group, sole male, ffm) joins by name',
+        idsOf(amamWithIII).split(',').sort().join(',') === '51,52,53,54', amamWithIII.map((c) => `${c.chapNum}:${c.id}`).join(' '))
 }
 
 if (!LIVE) {
@@ -504,11 +517,13 @@ if (!LIVE) {
         jigoIds.includes('668720') && jigoIds.includes('510240'),
         jigo.map((c) => `${c.chapNum}: ${c.name.slice(0, 40)}`).join(' | '))
 
-    // Of the Origin volumes in English, 1 is a Kantai Collection parody, 9 is
-    // tagged "group" and 11 "dilf" and "bbm" -- all three excluded by standing
-    // rules, so 2 ("Netoria …") and 4 ("pa:Costa Del Sol …") are the series as
-    // this reader is allowed it. That they arrive together is the proof: they
-    // share no leading words, only the artist and "Marked-girls Origin".
+    // Of the Origin volumes in English, 1 is a Kantai Collection parody and 11
+    // "dilf" and "bbm" -- both excluded by standing rules -- so 2 ("Netoria …")
+    // and 4 ("pa:Costa Del Sol …") are the series as this reader is allowed it.
+    // That they arrive together is the proof: they share no leading words,
+    // only the artist and "Marked-girls Origin". 9 (673703) is tagged "group"
+    // with "ffm threesome" -- one man, several women -- which the group rule
+    // allows, so it belongs with them.
     const origin = await s.getChapters('s:Netoria Marked-girls Origin')
     const originNames = origin.map((c) => c.name)
     const originIds = origin.map((c) => c.id)
@@ -516,8 +531,10 @@ if (!LIVE) {
         originIds.includes('673701') && originIds.includes('673702'),
         origin.map((c) => `${c.chapNum}: ${c.name.slice(0, 40)}`).join(' | '))
     check('…and none of the Origin volumes the standing rules exclude',
-        !originIds.some((id) => ['673700', '673703', '673705', '534191'].includes(id)),
+        !originIds.some((id) => ['673700', '673705', '534191'].includes(id)),
         originIds.join(', '))
+    check('…but vol. 9, group with an ffm threesome, is allowed and gathered',
+        originIds.includes('673703'), originIds.join(', '))
     check('…and leaves the circle\'s main and Collection lines out',
         !originNames.some((n) => !/origin/i.test(n) || /collection/i.test(n)),
         originNames.filter((n) => !/origin/i.test(n) || /collection/i.test(n)).join(' | ') || 'none leaked')

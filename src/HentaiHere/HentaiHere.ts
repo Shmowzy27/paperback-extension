@@ -23,6 +23,7 @@ import {
 } from '@paperback/types'
 
 import * as cheerio from 'cheerio'
+import { GROUP_REFUSAL_MESSAGE, groupRefusal } from '../NHentai/ContentRules'
 import { CheerioAPI } from 'cheerio'
 
 export const HH_DOMAIN = 'https://hentaihere.com'
@@ -34,8 +35,12 @@ const HH_CDN = 'https://hentaicdn.com/hentai'
  * exclusion is the whole rule. The label list also scrubs anything matching
  * from the tag catalog offered in the filter UI.
  */
-const BANNED_TAG_ID = '27'
-const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i
+//
+// Reverse Harem (T567) -- one woman with several men -- is excluded by the
+// user's rule on group scenes (../NHentai/ContentRules.ts), so it rides the
+// server-side exclusion alongside Yaoi. The site has no "group" category.
+const BANNED_TAG_IDS = ['27', '567']
+const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|reverse[- ]?harem|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i
 
 /** Appended to every text search; the search engine matches category names. */
 const SEARCH_SUFFIX = ' -yaoi'
@@ -68,7 +73,7 @@ interface ListingMetadata {
  * engine's own minus operator instead, and the details gate backstops both.
  */
 export const HentaiHereInfo: SourceInfo = {
-    version: '1.4.2',
+    version: '1.4.3',
     name: 'HentaiHere (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -155,7 +160,7 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
         // Whatever the reader chooses to leave out joins the standing
         // exclusion rather than replacing it, so yaoi can never be filtered
         // back in.
-        const excluded = [BANNED_TAG_ID]
+        const excluded = [...BANNED_TAG_IDS]
         for (const id of tagOut ?? []) {
             if (!excluded.includes(id)) excluded.push(id)
         }
@@ -216,14 +221,16 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
         // double as the gate.
         const tags: Tag[] = []
         const seen = new Set<string>()
-        let banned = false
+        let banned: string | undefined
+        const labels: string[] = []
         for (const element of $('a[href*="/search/T"]').toArray()) {
             const anchor = $(element)
             const tagId = /\/search\/(T\d+)/.exec(anchor.attr('href') ?? '')?.[1]
             const label = anchor.text().trim()
             if (tagId == undefined || label.length === 0 || seen.has(tagId)) continue
 
-            if (tagId === `T${BANNED_TAG_ID}` || BANNED_LABELS.test(label)) banned = true
+            if (BANNED_TAG_IDS.some((id) => tagId === `T${id}`) || BANNED_LABELS.test(label)) banned = banned ?? label
+            labels.push(label)
 
             seen.add(tagId)
             tags.push(App.createTag({ id: tagId, label: label }))
@@ -231,8 +238,14 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
 
         // The gate: excluded content refuses to open even from an old
         // bookmark, since listing cards on this site carry no tag data.
-        if (banned || BANNED_LABELS.test(title)) {
-            throw new Error('This title carries content excluded by your settings (BL/yaoi) and will not be shown.')
+        if (banned != undefined) {
+            throw new Error(`This title is filed under "${banned}", which is excluded by your settings, and will not be shown.`)
+        }
+        if (groupRefusal(labels) != undefined) {
+            throw new Error(GROUP_REFUSAL_MESSAGE)
+        }
+        if (BANNED_LABELS.test(title)) {
+            throw new Error('This title carries content excluded by your settings and will not be shown.')
         }
 
         const status = /status[^a-z]{0,10}completed/i.test(html) ? 'Completed' : 'Ongoing'
@@ -254,8 +267,14 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
     async getChapters(mangaId: string): Promise<Chapter[]> {
         const html = await this.fetchHtml(this.getMangaShareUrl(mangaId))
 
-        if (BANNED_LABELS.test(cheerio.load(html)('a[href*="/search/T"]').text())) {
-            throw new Error('This title carries content excluded by your settings (BL/yaoi) and will not be shown.')
+        {
+            const $gate = cheerio.load(html)
+            const labels = $gate('a[href*="/search/T"]').toArray().map((element) => $gate(element).text().trim())
+            const ids = $gate('a[href*="/search/T"]').toArray().map((element) => /\/search\/(T\d+)/.exec($gate(element).attr('href') ?? '')?.[1] ?? '')
+            if (ids.some((tagId) => BANNED_TAG_IDS.some((id) => tagId === `T${id}`))
+                || labels.some((label) => BANNED_LABELS.test(label)) || groupRefusal(labels) != undefined) {
+                throw new Error('This title carries content excluded by your settings and will not be shown.')
+            }
         }
 
         const rows: { slug: string; number: number; name: string }[] = []
@@ -398,7 +417,7 @@ export class HentaiHere implements SearchResultsProviding, MangaProviding, Chapt
                     const tagId = /\/search\/(T\d+)/.exec(anchor.attr('href') ?? '')?.[1]
                     const name = anchor.text().trim()
                     if (tagId == undefined || name.length === 0 || seen.has(tagId)) continue
-                    if (tagId === `T${BANNED_TAG_ID}` || BANNED_LABELS.test(name)) continue
+                    if (BANNED_TAG_IDS.some((id) => tagId === `T${id}`) || BANNED_LABELS.test(name)) continue
 
                     seen.add(tagId)
                     tags.push(App.createTag({ id: tagId, label: name }))

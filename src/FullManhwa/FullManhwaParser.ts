@@ -69,14 +69,17 @@ export const SM_BANNED_GENRE_SLUGS = [
     'genderswap',
     'monster',
     'monsters',
-    'monsters-action'
+    'monsters-action',
+    // One woman with several men, excluded by the user's rule on group
+    // scenes (../NHentai/ContentRules.ts).
+    'reverse-harem'
 ]
 
 /**
  * The same rule by name, for scrubbing the offered list and for reading a
  * series' own genres back off its page.
  */
-const SM_BANNED_GENRES = /\bmonsters?\b|\baliens?\b|\banimals?\b|crossdress|gender[- ]?bender|genderswap|\byaoi\b|boys?.?love|shounen[ -]?ai/i
+const SM_BANNED_GENRES = /\bmonsters?\b|\baliens?\b|\banimals?\b|crossdress|gender[- ]?bender|genderswap|\byaoi\b|boys?.?love|shounen[ -]?ai|reverse[- ]?harem/i
 
 /** Genre ids are namespaced so routeFor can tell them from sections/origins. */
 export const SM_GENRE_PREFIX = 'genre:'

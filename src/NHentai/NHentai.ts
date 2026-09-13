@@ -51,7 +51,6 @@ export const NH_BANNED: { id: number; name: string }[] = [
     { id: 133145, name: 'grandfather' },
     { id: 29013, name: 'dilf' },
     // group and arrangement
-    { id: 8010, name: 'group' },
     { id: 31880, name: 'bbm' },
     { id: 7256, name: 'mmf threesome' },
     // creatures
@@ -70,7 +69,7 @@ const NH_BANNED_NAMES_ONLY = [
     'mmmf', 'older man younger woman', 'old guy',
     // multiple male-bodied participants
     'mmm threesome', 'mmt threesome', 'mtf threesome', 'ttf threesome',
-    'ttm threesome', 'gang rape', 'gangbang', 'orgy',
+    'ttm threesome', 'gang rape', 'gangbang', 'orgy', 'reverse harem',
     // animals and creatures
     'bestiality', 'low bestiality', 'furry', 'animal on animal',
     'human on furry', 'octopus', 'slime', 'insect', 'snake', 'spider',
@@ -121,6 +120,14 @@ const MULTI_WORK_SERIES_ID = 21572
 const isMultiWork = (tagIds: number[] | undefined): boolean => (tagIds ?? []).includes(MULTI_WORK_SERIES_ID)
 
 /**
+ * The group rule (ContentRules.ts) in this site's tag ids: "group" is allowed
+ * with one man among several women -- sole male, ffm threesome, harem -- and
+ * refused with sole female, or with nothing to say there is one man. Mesu no
+ * Ie III carries group, sole male and ffm threesome, and is shown.
+ */
+const GROUP_RULE = { group: [8010], oneMale: [35763, 15348, 15785], oneFemale: [35762] }
+
+/**
  * Browsable tag catalogs, the way HentaiNexus offers its categories. Each type
  * costs one request, and the API caps a page at a hundred entries, so the most
  * popular of each are offered rather than all 4,696 tags -- pulling the lot
@@ -167,6 +174,8 @@ import {
     volumeOf
 } from './SeriesMerge'
 export { cleanTitle, creatorOf, creatorsOf, seriesKey, sharesSubtitle, sharesLead, sharesTail, splitTitle } from './SeriesMerge'
+import { GROUP_REFUSAL_MESSAGE, groupRefusedByIds } from './ContentRules'
+export { groupRefusal, groupRefusedByIds } from './ContentRules'
 
 const SERIES_PREFIX = 's:'
 export const seriesIdFor = (title: string): string => `${SERIES_PREFIX}${splitTitle(title).base}`
@@ -250,7 +259,7 @@ interface ListingMetadata {
  * returned entry re-checked against the banned tag ids as the backstop.
  */
 export const NHentaiInfo: SourceInfo = {
-    version: '2.4.1',
+    version: '2.4.2',
     name: 'nhentai (Filtered)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -452,6 +461,7 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         const ids = tagIds ?? []
         if (!ids.includes(ENGLISH_ID)) return false
         if (ids.some((id) => BANNED_IDS.has(id))) return false
+        if (groupRefusedByIds(ids, GROUP_RULE)) return false
 
         // A listing entry mixes every tag type into one id list, so a parody
         // shows up here too once the parody ids are known.
@@ -628,6 +638,9 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
                         this.searchUrl(searchTermFor(`${creator.type}:${creator.name}`, false), 'date', 1)
                     )).result ?? []
                     consider(byArtist, true)
+                    // Again: a volume can belong through a member the first
+                    // pass found after it -- the newest volume comes first.
+                    consider(byArtist, true)
                 }
             } catch {
                 // The name search alone still stands.
@@ -765,6 +778,9 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         if (tags.some((tag) => BANNED_IDS.has(tag.id))) {
             throw new Error('This gallery carries content excluded by your settings and will not be shown.')
         }
+        if (groupRefusedByIds(tags.map((tag) => tag.id), GROUP_RULE)) {
+            throw new Error(GROUP_REFUSAL_MESSAGE)
+        }
         if (tags.some((tag) => tag.type === 'parody' && tag.id !== ORIGINAL_PARODY_ID)) {
             throw new Error('This gallery is a parody, which your settings exclude, and will not be shown.')
         }
@@ -822,6 +838,9 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
             }
             if ((gallery.tags ?? []).some((tag) => BANNED_IDS.has(tag.id))) {
                 throw new Error('This gallery carries content excluded by your settings and will not be shown.')
+            }
+            if (groupRefusedByIds((gallery.tags ?? []).map((tag) => tag.id), GROUP_RULE)) {
+                throw new Error(GROUP_REFUSAL_MESSAGE)
             }
             if ((gallery.tags ?? []).some((tag) => tag.type === 'parody' && tag.id !== ORIGINAL_PARODY_ID)) {
                 throw new Error('This gallery is a parody, which your settings exclude, and will not be shown.')
@@ -989,7 +1008,10 @@ export class NHentai implements SearchResultsProviding, MangaProviding, ChapterP
         sections.push(App.createTagSection({
             id: 'excluded',
             label: 'Always Excluded',
-            tags: NH_BANNED.map((tag) => App.createTag({ id: `x-${tag.id}`, label: `No ${tag.name}` }))
+            tags: [
+                ...NH_BANNED.map((tag) => App.createTag({ id: `x-${tag.id}`, label: `No ${tag.name}` })),
+                App.createTag({ id: 'x-group-rule', label: 'No group unless one man (sole male, ffm, harem)' })
+            ]
         }))
 
         return sections

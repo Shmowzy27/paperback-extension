@@ -24,7 +24,7 @@ const MUST_MATCH = [
     // the older-male category, which is what "old" was ever about
     'old man', 'old men', 'old guy', 'older man younger woman', 'older men',
     'grandfather', 'grandpa', 'granddad', 'grand-dad', 'gramps', 'dilf',
-    'group', 'group sex', 'bbm', 'gang rape', 'gangbang', 'orgy',
+    'bbm', 'gang rape', 'gangbang', 'orgy', 'reverse harem', 'reverse-harem',
     // two or more male-bodied participants
     'mmf threesome', 'mmm threesome', 'mmt threesome', 'mtf threesome',
     'ttf threesome', 'ttm threesome', 'mmmf',
@@ -52,6 +52,11 @@ const MUST_NOT_MATCH = [
     // one male is not "multiple males", and animal *ears* are not an animal.
     'ffm threesome', 'fff threesome', 'kemonomimi', 'kemonomimi | animal ears',
     'catgirl', 'cat ears',
+    // "group" is not excluded by name any more: one man among several women
+    // is allowed, several men with one woman is not, and which it is takes
+    // the gallery's other tags -- the group rule in ContentRules.ts, checked
+    // below. So the name list itself must let these through.
+    'group', 'group intercourse', 'harem', 'threesome (mff)',
     // ordinary tags that must survive
     'big breasts', 'glasses', 'schoolgirl uniform', 'blowjob', 'stockings',
     'elf', 'sole female', 'nakadashi', 'ahegao', 'swimsuit', 'maid', 'nurse',
@@ -83,7 +88,7 @@ for (const name of sources) {
         const all = names.concat(extra)
 
         const required = ['yaoi', 'males only', 'tomgirl', 'crossdressing', 'ugly bastard',
-            'bald', 'gigantic breasts', 'old man', 'grandfather', 'dilf', 'group', 'bbm',
+            'bald', 'gigantic breasts', 'old man', 'grandfather', 'dilf', 'bbm',
             'mmf threesome', 'monster', 'tentacles', 'alien']
         const missing = required.filter((word) => !all.includes(word))
 
@@ -118,6 +123,37 @@ for (const name of sources) {
 
     check(`${name}: catches everything it must`, missed.length === 0, missed.join(', ') || `${MUST_MATCH.length} terms`)
     check(`${name}: catches nothing it must not`, wrong.length === 0, wrong.join(', ') || `${MUST_NOT_MATCH.length} safe words`)
+}
+
+// ---- the group rule (src/NHentai/ContentRules.ts) ----
+// One man among several women is allowed; several men with one woman is not.
+// "Group" with nothing to say which is refused.
+{
+    const identity = (x) => x
+    global.App = global.App || {
+        createRequest: identity, createPartialSourceManga: identity, createSourceManga: identity, createMangaInfo: identity,
+        createTag: identity, createTagSection: identity, createChapter: identity, createChapterDetails: identity,
+        createPagedResults: identity, createHomeSection: identity,
+        createRequestManager: () => ({ getDefaultUserAgent: async () => '', schedule: async () => { throw new Error('offline') } })
+    }
+    const { Sources } = require(path.join(__dirname, '..', 'bundles', 'NHentai', 'source.js'))
+    const CASES = [
+        [['group', 'sole male', 'ffm threesome'], false, 'Mesu no Ie III: group, sole male, ffm threesome'],
+        [['Group Intercourse', 'Harem'], false, 'Hentai2Read: Group Intercourse with Harem'],
+        [['Group Intercourse', 'Threesome (MFF)'], false, 'Hentai2Read: Group Intercourse with Threesome (MFF)'],
+        [['group', 'sole female'], true, 'group with sole female'],
+        [['group'], true, 'group with nothing to say who'],
+        [['Group Intercourse', 'Reverse Harem'], true, 'group with Reverse Harem'],
+        [['big breasts', 'sole male'], false, 'no group at all']
+    ]
+    for (const [labels, refused, label] of CASES) {
+        const verdict = Sources.groupRefusal(labels) != undefined
+        check(`group rule: ${label} -> ${refused ? 'refused' : 'allowed'}`, verdict === refused)
+    }
+    const RULE = { group: [8010], oneMale: [35763, 15348, 15785], oneFemale: [35762] }
+    check('group rule by ids: nhentai group + sole male -> allowed', !Sources.groupRefusedByIds([8010, 35763], RULE))
+    check('group rule by ids: nhentai group + sole female -> refused', Sources.groupRefusedByIds([8010, 35762, 35763], RULE))
+    check('group rule by ids: nhentai group alone -> refused', Sources.groupRefusedByIds([8010], RULE))
 }
 
 console.log(failures > 0 ? `\n${failures} check(s) failed` : '\nall checks passed')

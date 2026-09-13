@@ -51,12 +51,12 @@ export const ASM_DOMAIN = 'https://asmhentai.com'
  * name matched "females only" until the pattern below was anchored.
  */
 const BANNED_TAG_IDS = new Set([
-    '8', '13', '24', '84', '87', '88', '102', '104', '105', '106',
+    '13', '24', '84', '87', '88', '102', '104', '105', '106',
     '117', '118', '122', '143', '151', '178', '215', '218', '270', '297',
     '302', '309', '311', '339', '343', '344', '353', '369', '371', '376',
     '377', '379', '380', '398', '405', '406', '417', '418', '441', '442',
     '445', '454', '460', '493', '534', '548', '560', '563', '581', '660',
-    '1153', '1225', '1296', '1469', '1580', '3513', '5478', '7381', '8220', '8224'
+    '1153', '1225', '1296', '1469', '1580', '3513', '4021', '5478', '7381', '8220', '8224'
 ])
 
 /**
@@ -69,7 +69,7 @@ const BANNED_TAG_IDS = new Set([
  * The threesome codes read as: two or more male-bodied participants, m or t,
  * so mmf, mmm, mmt, mtf, ttf and ttm go while ffm and fff stay.
  */
-const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|\bgroup\b|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i
+const BANNED_LABELS = /yaoi|boys?.?love|shounen[ -]?ai|\bmales only\b|tomgirl|crossdress|ugly bastard|\bbald\b|\bfat\b|gigantic breasts|\bold\s*m[ae]n\b|\bolder\s*m[ae]n\b|\bold\s*guy\b|\bgrandfather\b|\bgrandpa\b|\bgrand-?dad\b|\bgramps\b|\bdilf\b|reverse[- ]?harem|\bbbm\b|\bgang|\borgy\b|\b[mt]{2,}[mtf]\s*(?:threesome|foursome)\b|\bmm+f?\b|bestial|\bfurry\b|animal on|human on furry|octopus|\btentacl|\bmonster|\bslime\b|\binsect|\bsnake\b|\bspider\b|\bworm\b|\bcentaur\b|\bminotaur\b|\bhorse\b|\bdog\b|\bcat\b(?!\s*ears)|\bpig\b|\bfish\b|\bfrog\b|\bbird (?:girl|boy)\b|\bbear\b|\bwolf\b|\balien\b/i
 
 /**
  * Anime and game parodies are excluded, leaving original works. The site marks
@@ -155,6 +155,7 @@ import {
     splitTitle,
     volumeOf
 } from '../NHentai/SeriesMerge'
+import { GROUP_REFUSAL_MESSAGE, groupRefusal, groupRefusedByIds } from '../NHentai/ContentRules'
 export { cleanTitle, splitTitle } from '../NHentai/SeriesMerge'
 
 /**
@@ -162,6 +163,15 @@ export { cleanTitle, splitTitle } from '../NHentai/SeriesMerge'
  * /tag/multi-work-series/. Its word that a gallery has siblings.
  */
 const MULTI_WORK_TAG_ID = '25'
+
+/**
+ * The group rule (../NHentai/ContentRules.ts) in this site's tag ids, each
+ * resolved as the id on every card of the tag's own listing that is rarest
+ * site-wide: group 8; sole male 97, ffm threesome 38, harem 54; sole female
+ * 96. ("Every card" alone is not enough here: id 1 is on every card of the
+ * mmf-threesome listing, and on over half of all English cards besides.)
+ */
+const GROUP_RULE = { group: ['8'], oneMale: ['97', '38', '54'], oneFemale: ['96'] }
 
 /** A card's artist and group, as the ids its own attributes carry. */
 const creditIdsOf = (card: { attr: (name: string) => string | undefined }): string[] => {
@@ -218,7 +228,7 @@ interface CardRow {
  * English are dropped the same way, on the cards' language ids.
  */
 export const AsmHentaiInfo: SourceInfo = {
-    version: '1.6.2',
+    version: '1.6.3',
     name: 'AsmHentai (English)',
     icon: 'icon.png',
     author: 'Shmowzy27',
@@ -387,6 +397,7 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
 
             const tagIds = (card.attr('data-tags') ?? '').split(/\s+/).filter((id) => id.length > 0)
             if (tagIds.some((id) => BANNED_TAG_IDS.has(id))) continue
+            if (groupRefusedByIds(tagIds, GROUP_RULE)) continue
 
             const galleryId = /\/g\/(\d+)\//.exec(card.find('a[href^="/g/"]').first().attr('href') ?? '')?.[1]
             const raw = card.find('h2.caption').first().text().replace(/\s+/g, ' ').trim()
@@ -620,7 +631,11 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
                 const creator = artists[0] ?? this.metaRow($, 'Groups')[0]
                 if (creator != undefined) {
                     const type = artists.length > 0 ? 'artist' : 'group'
-                    consider(this.parseCards(await this.loadPage(`${ASM_DOMAIN}/${type}/${creator.slug}/`)), true)
+                    const byArtist = this.parseCards(await this.loadPage(`${ASM_DOMAIN}/${type}/${creator.slug}/`))
+                    consider(byArtist, true)
+                    // Again: a volume can belong through a member the first
+                    // pass found after it -- the newest volume comes first.
+                    consider(byArtist, true)
                 }
             } catch {
                 // The name search and the listing's folds still stand.
@@ -704,6 +719,9 @@ export class AsmHentai implements SearchResultsProviding, MangaProviding, Chapte
 
         if (tags.some((tag) => BANNED_LABELS.test(tag.name) || BANNED_TAG_IDS.has(tag.slug))) {
             throw new Error('This gallery carries content excluded by your settings and will not be shown.')
+        }
+        if (groupRefusal(tags.map((tag) => tag.name)) != undefined) {
+            throw new Error(GROUP_REFUSAL_MESSAGE)
         }
 
         // Anything filed under a parody other than the site's own "original"

@@ -119,7 +119,10 @@ const expectGateThrow = async (label, fn) => {
 ;(async () => {
     // ================= nhentai =================
     console.log('===== nhentai (Filtered) =====')
-    {
+    // SKIP_NHENTAI=1 leaves nhentai out, so the other sites can be checked
+    // while nhentai-merge-check --live holds the ten-a-minute budget.
+    if (process.env.SKIP_NHENTAI === '1') console.log('skipped (SKIP_NHENTAI=1)')
+    else {
         // 7.2s between requests, not the 4.5s this used to run at. The site
         // starts answering 429 at about ten requests a minute, and the source
         // paces itself to that on the device; running the harness faster made
